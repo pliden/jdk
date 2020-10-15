@@ -228,6 +228,10 @@ inline uint32_t ZMarkStripeMap::get() const {
   return _map;
 }
 
+inline bool ZMarkThreadLocalStacks::is_freed() const {
+  return _magazine == NULL;
+}
+
 inline void ZMarkThreadLocalStacks::install(ZMarkStripeSet* stripes,
                                             ZMarkStripe* stripe,
                                             ZMarkStack* stack) {

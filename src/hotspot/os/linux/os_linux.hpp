@@ -180,6 +180,7 @@ class Linux {
   static void expand_stack_to(address bottom);
 
   typedef int (*sched_getcpu_func_t)(void);
+  typedef int (*numa_run_on_node_t)(int node);
   typedef int (*numa_node_to_cpus_func_t)(int node, unsigned long *buffer, int bufferlen);
   typedef int (*numa_node_to_cpus_v2_func_t)(int node, void *mask);
   typedef int (*numa_max_node_func_t)(void);
@@ -197,6 +198,7 @@ class Linux {
   typedef int (*numa_distance_func_t)(int node1, int node2);
 
   static sched_getcpu_func_t _sched_getcpu;
+  static numa_run_on_node_t _numa_run_on_node;
   static numa_node_to_cpus_func_t _numa_node_to_cpus;
   static numa_node_to_cpus_v2_func_t _numa_node_to_cpus_v2;
   static numa_max_node_func_t _numa_max_node;
@@ -219,6 +221,7 @@ class Linux {
   static struct bitmask* _numa_membind_bitmask;
 
   static void set_sched_getcpu(sched_getcpu_func_t func) { _sched_getcpu = func; }
+  static void set_numa_run_on_node(numa_run_on_node_t func) { _numa_run_on_node = func; }
   static void set_numa_node_to_cpus(numa_node_to_cpus_func_t func) { _numa_node_to_cpus = func; }
   static void set_numa_node_to_cpus_v2(numa_node_to_cpus_v2_func_t func) { _numa_node_to_cpus_v2 = func; }
   static void set_numa_max_node(numa_max_node_func_t func) { _numa_max_node = func; }
@@ -250,6 +253,9 @@ class Linux {
 
  public:
   static int sched_getcpu()  { return _sched_getcpu != NULL ? _sched_getcpu() : -1; }
+  static int numa_run_on_node(int node) {
+    return _numa_run_on_node != NULL ? _numa_run_on_node(node) : -1;
+  }
   static int numa_node_to_cpus(int node, unsigned long *buffer, int bufferlen);
   static int numa_max_node() { return _numa_max_node != NULL ? _numa_max_node() : -1; }
   static int numa_num_configured_nodes() {

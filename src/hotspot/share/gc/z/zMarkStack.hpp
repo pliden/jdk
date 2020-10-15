@@ -152,6 +152,7 @@ public:
   ZMarkThreadLocalStacks();
 
   bool is_empty() const;
+  bool is_freed() const;
 
   void install(ZMarkStripeSet* stripes,
                ZMarkStripe* stripe,

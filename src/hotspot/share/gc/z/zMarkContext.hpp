@@ -26,6 +26,7 @@
 
 class ZMarkContext {
 public:
+  constexpr bool steal_from_all_stripes() const;
   constexpr size_t nvictim_stripes() const;
   constexpr bool should_timeout() const;
 };
@@ -43,6 +44,7 @@ public:
   ZMarkEndContext();
   ~ZMarkEndContext();
 
+  constexpr bool steal_from_all_stripes() const;
   constexpr size_t nvictim_stripes() const;
   bool should_timeout();
 };

@@ -21,53 +21,30 @@
  * questions.
  */
 
-#ifndef SHARE_GC_Z_ZMARKFLUSH_HPP
-#define SHARE_GC_Z_ZMARKFLUSH_HPP
+#ifndef SHARE_GC_Z_ZMARKAFFINITY_HPP
+#define SHARE_GC_Z_ZMARKAFFINITY_HPP
 
-#include "runtime/handshake.hpp"
-#include "runtime/task.hpp"
+#include "gc/z/zMarkStack.hpp"
+#include "memory/allocation.hpp"
 
-class ZMark;
-
-class ZMarkFlushClosure : public HandshakeClosure {
+class ZMarkAffinity : public StackObj {
 private:
-  ZMark* const _mark;
-  const bool   _free_magazine;
+  ZMarkStripe*   _stripe;
+  ZMarkStripeMap _stripe_map;
+  const bool     _numa_affinity;
+
+  void set_default_affinity(ZMarkStripeSet* stripes, uint nworkers, uint worker_id);
+  void set_numa_affinity(ZMarkStripeSet* stripes, uint nworkers, uint worker_id);
+  void clear_numa_affinity();
+
+  void print(ZMarkStripeSet* stripes, ZMarkStripe* stripe) const;
 
 public:
-  ZMarkFlushClosure(ZMark* mark, bool free_magazine);
+  ZMarkAffinity(ZMarkStripeSet* stripes, uint nworkers, uint worker_id, bool steal_from_all);
+  ~ZMarkAffinity();
 
-  virtual void do_thread(Thread* thread);
+  ZMarkStripe* home_stripe() const;
+  ZMarkStripeMap stripe_map() const;
 };
 
-class ZMarkFlushPeriodicTask : public PeriodicTask {
-private:
-  ZMark* const _mark;
-
-public:
-  ZMarkFlushPeriodicTask(ZMark* mark);
-
-  virtual void task();
-};
-
-class ZMarkFlushPeriodic {
-private:
-  ZMarkFlushPeriodicTask _task;
-
-public:
-  ZMarkFlushPeriodic(ZMark* mark);
-  ~ZMarkFlushPeriodic();
-};
-
-class ZMarkFlush {
-private:
-  ZMark* const _mark;
-
-public:
-  ZMarkFlush(ZMark* mark);
-
-  void vm_and_java_threads();
-  void all_threads();
-};
-
-#endif // SHARE_GC_Z_ZMARKFLUSH_HPP
+#endif // SHARE_GC_Z_ZMARKAFFINITY_HPP

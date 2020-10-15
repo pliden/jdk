@@ -263,7 +263,7 @@ void ZHeap::mark(bool initial) {
 }
 
 void ZHeap::mark_flush(Thread* thread) {
-  _mark.flush(thread, true /* free_remaining */);
+  _mark.flush(thread, true /* free_magazine */);
 }
 
 bool ZHeap::mark_end() {

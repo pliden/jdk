@@ -88,10 +88,8 @@ private:
   bool restart();
   bool complete();
 
-  void verify_termination() const;
-  void verify_thread_stacks_empty() const;
-  void verify_stripe_stacks_empty() const;
   void verify_all_stacks_empty() const;
+  void verify_termination() const;
 
 public:
   ZMark(ZWorkers* workers, ZPageTable* page_table);
@@ -105,7 +103,7 @@ public:
   void mark(bool initial);
   bool end();
 
-  void flush(Thread* thread, bool free_remaining);
+  void flush(Thread* thread, bool free_magazine);
 };
 
 #endif // SHARE_GC_Z_ZMARK_HPP

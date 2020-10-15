@@ -68,3 +68,29 @@ uint32_t ZNUMA::memory_id(uintptr_t addr) {
 
   return id;
 }
+
+void ZNUMA::set_thread_affinity(uint32_t node_id) {
+  if (!_enabled) {
+    // NUMA support not enabled
+    return;
+  }
+
+  if (os::Linux::numa_run_on_node((int)node_id) == -1) {
+    ZErrno err;
+    fatal("Failed to set thread affinity (%s)", err.to_string());
+  }
+
+  assert(ZNUMA::id() == node_id, "Should have affinity");
+}
+
+void ZNUMA::clear_thread_affinity() {
+  if (!_enabled) {
+    // NUMA support not enabled
+    return;
+  }
+
+  if (os::Linux::numa_run_on_node(-1) == -1) {
+    ZErrno err;
+    fatal("Failed to clear thread affinity (%s)", err.to_string());
+  }
+}

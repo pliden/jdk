@@ -26,6 +26,7 @@
 #include "gc/shared/suspendibleThreadSet.hpp"
 #include "gc/z/zBarrier.inline.hpp"
 #include "gc/z/zMark.inline.hpp"
+#include "gc/z/zMarkAffinity.hpp"
 #include "gc/z/zMarkCache.inline.hpp"
 #include "gc/z/zMarkContext.inline.hpp"
 #include "gc/z/zMarkStack.inline.hpp"
@@ -83,19 +84,19 @@ size_t ZMark::calculate_nstripes(uint nworkers) const {
 }
 
 ZMarkStripeMap ZMark::calculate_stripe_map(ZMarkStripe* stripe, size_t nvictims) {
-  ZMarkStripeMap stripe_map;
+  ZMarkStripeMap map;
 
   // Set home stripe
-  stripe_map.set(_stripes.stripe_id(stripe));
+  map.set(_stripes.stripe_id(stripe));
 
   // Set steal victim stripes
   const size_t nvictims_capped = MIN2(nvictims, _stripes.nstripes() - 1);
   for (size_t i = 0; i < nvictims_capped; i++) {
     stripe = _stripes.stripe_next(stripe);
-    stripe_map.set(_stripes.stripe_id(stripe));
+    map.set(_stripes.stripe_id(stripe));
   }
 
-  return stripe_map;
+  return map;
 }
 
 void ZMark::prepare_mark() {
@@ -351,12 +352,12 @@ bool ZMark::drain_and_publish(ZMarkStripe* stripe, ZMarkThreadLocalStacks* stack
   return success;
 }
 
-bool ZMark::steal(ZMarkStripe* stripe, ZMarkThreadLocalStacks* stacks, ZMarkStripeMap stripe_map) {
+bool ZMark::steal(ZMarkStripe* stripe, ZMarkThreadLocalStacks* stacks, ZMarkStripeMap map) {
   // Try to steal a stack from another stripe in the stripe map
   ZMarkStripe* victim = _stripes.stripe_next(stripe);
   while (victim != stripe) {
     const size_t victim_id = _stripes.stripe_id(victim);
-    if (stripe_map.get(victim_id)) {
+    if (map.get(victim_id)) {
       ZMarkStack* const stack = victim->steal_stack();
       if (stack != NULL) {
         // Success, install the stolen stack
@@ -373,16 +374,18 @@ bool ZMark::steal(ZMarkStripe* stripe, ZMarkThreadLocalStacks* stacks, ZMarkStri
   return false;
 }
 
-bool ZMark::idle(ZMarkStripeMap stripe_map) {
-  return _terminate.idle(stripe_map);
+bool ZMark::idle(ZMarkStripeMap map) {
+  return _terminate.idle(map);
 }
 
 template <typename Context>
 void ZMark::work() {
   Context context;
+  //ZMarkStripe* const stripe = _stripes.stripe_for_worker(_nworkers, ZThread::worker_id());
   ZMarkCache cache(_stripes.nstripes());
-  ZMarkStripe* const stripe = _stripes.stripe_for_worker(_nworkers, ZThread::worker_id());
-  ZMarkStripeMap const stripe_map(calculate_stripe_map(stripe, context.nvictim_stripes()));
+  ZMarkAffinity const affinity(&_stripes, _nworkers, ZThread::worker_id(), context.steal_from_all_stripes());
+  ZMarkStripe* const stripe = affinity.home_stripe();
+  ZMarkStripeMap const map = affinity.stripe_map();
   ZMarkThreadLocalStacks* const stacks = ZThreadLocalData::stacks(Thread::current());
 
   for (;;) {
@@ -391,12 +394,12 @@ void ZMark::work() {
       break;
     }
 
-    if (steal(stripe, stacks, stripe_map)) {
+    if (steal(stripe, stacks, map)) {
       // Stole work
       continue;
     }
 
-    if (idle(stripe_map)) {
+    if (idle(map)) {
       // Terminate
       break;
     }
@@ -462,7 +465,7 @@ public:
     // Flush and free worker stacks. Needed here since the set of
     // workers executing during root scanning can be different from
     // the set of workers executing during mark.
-    _mark->flush(Thread::current(), true /* free_remaining */);
+    _mark->flush(Thread::current(), true /* free_magazine */);
   }
 };
 
@@ -570,18 +573,14 @@ bool ZMark::end() {
   return true;
 }
 
-void ZMark::flush(Thread* thread, bool free_remaining) {
+void ZMark::flush(Thread* thread, bool free_magazine) {
   ZMarkThreadLocalStacks* const stacks = ZThreadLocalData::stacks(thread);
 
   publish(stacks);
 
-  if (free_remaining) {
+  if (free_magazine) {
     free(stacks);
   }
-}
-
-void ZMark::verify_termination() const {
-  guarantee(_terminate.has_active_stripes() != _stripes.is_empty(), "Termination state mismatch");
 }
 
 class ZVerifyMarkStacksEmptyClosure : public ThreadClosure {
@@ -589,19 +588,19 @@ public:
   virtual void do_thread(Thread* thread) {
     ZMarkThreadLocalStacks* const stacks = ZThreadLocalData::stacks(thread);
     guarantee(stacks->is_empty(), "Should be empty");
+    guarantee(stacks->is_freed(), "Should be freed");
   }
 };
 
-void ZMark::verify_thread_stacks_empty() const {
+void ZMark::verify_all_stacks_empty() const {
+  // Verify all thread stacks empty
   ZVerifyMarkStacksEmptyClosure cl;
   Threads::threads_do(&cl);
-}
 
-void ZMark::verify_stripe_stacks_empty() const {
+  // Verify all stripes empty
   guarantee(_stripes.is_empty(), "Should be empty");
 }
 
-void ZMark::verify_all_stacks_empty() const {
-  verify_thread_stacks_empty();
-  verify_stripe_stacks_empty();
+void ZMark::verify_termination() const {
+  guarantee(_terminate.has_active_stripes() != _stripes.is_empty(), "Termination state mismatch");
 }

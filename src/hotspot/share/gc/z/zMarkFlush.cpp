@@ -65,13 +65,13 @@ static void flush_all_threads(ZMarkFlushClosure* cl) {
   Threads::threads_do(cl);
 }
 
-ZMarkFlushClosure::ZMarkFlushClosure(ZMark* mark, bool free_remaining) :
+ZMarkFlushClosure::ZMarkFlushClosure(ZMark* mark, bool free_magazine) :
     HandshakeClosure("ZMarkFlush"),
     _mark(mark),
-    _free_remaining(free_remaining) {}
+    _free_magazine(free_magazine) {}
 
 void ZMarkFlushClosure::do_thread(Thread* thread) {
-  _mark->flush(thread, _free_remaining);
+  _mark->flush(thread, _free_magazine);
 }
 
 ZMarkFlushPeriodicTask::ZMarkFlushPeriodicTask(ZMark* mark) :
@@ -80,7 +80,7 @@ ZMarkFlushPeriodicTask::ZMarkFlushPeriodicTask(ZMark* mark) :
 
 void ZMarkFlushPeriodicTask::task() {
   ZStatTimer timer(ZSubPhaseConcurrentMarkFlush);
-  ZMarkFlushClosure cl(_mark, false /* free_remaining */);
+  ZMarkFlushClosure cl(_mark, false /* free_magazine */);
   flush_vm_and_java_threads(&cl);
 }
 
@@ -97,11 +97,11 @@ ZMarkFlush::ZMarkFlush(ZMark* mark) :
     _mark(mark) {}
 
 void ZMarkFlush::vm_and_java_threads() {
-  ZMarkFlushClosure cl(_mark, true /* free_remaining */);
+  ZMarkFlushClosure cl(_mark, true /* free_magazine */);
   flush_vm_and_java_threads(&cl);
 }
 
 void ZMarkFlush::all_threads() {
-  ZMarkFlushClosure cl(_mark, true /* free_remaining */);
+  ZMarkFlushClosure cl(_mark, true /* free_magazine */);
   flush_all_threads(&cl);
 }

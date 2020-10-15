@@ -41,6 +41,9 @@ public:
 
   static uint32_t memory_id(uintptr_t addr);
 
+  static void set_thread_affinity(uint32_t node_id);
+  static void clear_thread_affinity();
+
   static const char* to_string();
 };
 

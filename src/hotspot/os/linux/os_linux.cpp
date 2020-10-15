@@ -3085,6 +3085,8 @@ bool os::Linux::libnuma_init() {
   if (sched_getcpu() != -1) { // Requires sched_getcpu() support
     void *handle = dlopen("libnuma.so.1", RTLD_LAZY);
     if (handle != NULL) {
+      set_numa_run_on_node(CAST_TO_FN_PTR(numa_run_on_node_t,
+                                           libnuma_dlsym(handle, "numa_run_on_node")));
       set_numa_node_to_cpus(CAST_TO_FN_PTR(numa_node_to_cpus_func_t,
                                            libnuma_dlsym(handle, "numa_node_to_cpus")));
       set_numa_node_to_cpus_v2(CAST_TO_FN_PTR(numa_node_to_cpus_v2_func_t,
@@ -3257,6 +3259,7 @@ int os::Linux::get_node_by_cpu(int cpu_id) {
 GrowableArray<int>* os::Linux::_cpu_to_node;
 GrowableArray<int>* os::Linux::_nindex_to_node;
 os::Linux::sched_getcpu_func_t os::Linux::_sched_getcpu;
+os::Linux::numa_run_on_node_t os::Linux::_numa_run_on_node;
 os::Linux::numa_node_to_cpus_func_t os::Linux::_numa_node_to_cpus;
 os::Linux::numa_node_to_cpus_v2_func_t os::Linux::_numa_node_to_cpus_v2;
 os::Linux::numa_max_node_func_t os::Linux::_numa_max_node;

@@ -26,7 +26,13 @@
 
 #include "gc/z/zGlobals.hpp"
 #include "gc/z/zMarkContext.hpp"
+#include "gc/z/zNUMA.inline.hpp"
 #include "runtime/os.hpp"
+
+constexpr bool ZMarkContext::steal_from_all_stripes() const {
+  // Steal only work from NUMA local stripes
+  return true;
+}
 
 constexpr size_t ZMarkContext::nvictim_stripes() const {
   // Steal work from at most three other stripes
@@ -36,6 +42,11 @@ constexpr size_t ZMarkContext::nvictim_stripes() const {
 constexpr bool ZMarkContext::should_timeout() const {
   // Never times out
   return false;
+}
+
+constexpr bool ZMarkEndContext::steal_from_all_stripes() const {
+  // Steal work all stripes
+  return true;
 }
 
 constexpr size_t ZMarkEndContext::nvictim_stripes() const {
