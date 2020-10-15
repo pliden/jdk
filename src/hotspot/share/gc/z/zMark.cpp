@@ -27,8 +27,8 @@
 #include "gc/z/zBarrier.inline.hpp"
 #include "gc/z/zMark.inline.hpp"
 #include "gc/z/zMarkCache.inline.hpp"
+#include "gc/z/zMarkContext.inline.hpp"
 #include "gc/z/zMarkStack.inline.hpp"
-#include "gc/z/zMarkTerminate.inline.hpp"
 #include "gc/z/zOopClosures.inline.hpp"
 #include "gc/z/zPage.hpp"
 #include "gc/z/zPageTable.inline.hpp"
@@ -42,38 +42,31 @@
 #include "gc/z/zWorkers.inline.hpp"
 #include "logging/log.hpp"
 #include "memory/iterator.inline.hpp"
+#include "memory/resourceArea.hpp"
 #include "oops/objArrayOop.inline.hpp"
 #include "oops/oop.inline.hpp"
-#include "runtime/atomic.hpp"
-#include "runtime/handshake.hpp"
-#include "runtime/prefetch.inline.hpp"
 #include "runtime/safepointMechanism.hpp"
 #include "runtime/stackWatermark.hpp"
 #include "runtime/stackWatermarkSet.inline.hpp"
+#include "runtime/task.hpp"
 #include "runtime/thread.hpp"
+#include "runtime/threadSMR.hpp"
 #include "utilities/align.hpp"
 #include "utilities/globalDefinitions.hpp"
 #include "utilities/powerOfTwo.hpp"
-#include "utilities/ticks.hpp"
 
-static const ZStatSubPhase ZSubPhaseConcurrentMark("Concurrent Mark");
-static const ZStatSubPhase ZSubPhaseConcurrentMarkTryFlush("Concurrent Mark Try Flush");
-static const ZStatSubPhase ZSubPhaseConcurrentMarkIdle("Concurrent Mark Idle");
-static const ZStatSubPhase ZSubPhaseConcurrentMarkTryTerminate("Concurrent Mark Try Terminate");
-static const ZStatSubPhase ZSubPhaseMarkTryComplete("Pause Mark Try Complete");
+static const ZStatSubPhase ZSubPhaseConcurrentMarkFlushRestart("Concurrent Mark Flush Restart");
+static const ZStatSubPhase ZSubPhasePauseMarkEndComplete("Pause Mark End Complete");
 
 ZMark::ZMark(ZWorkers* workers, ZPageTable* page_table) :
     _workers(workers),
     _page_table(page_table),
     _allocator(),
     _stripes(),
+    _flush(this),
     _terminate(),
-    _work_terminateflush(true),
-    _work_nproactiveflush(0),
-    _work_nterminateflush(0),
-    _nproactiveflush(0),
-    _nterminateflush(0),
-    _ntrycomplete(0),
+    _nrestart(0),
+    _ncomplete(0),
     _ncontinue(0),
     _nworkers(0) {}
 
@@ -89,16 +82,29 @@ size_t ZMark::calculate_nstripes(uint nworkers) const {
   return MIN2(nstripes, ZMarkStripesMax);
 }
 
+ZMarkStripeMap ZMark::calculate_stripe_map(ZMarkStripe* stripe, size_t nvictims) {
+  ZMarkStripeMap stripe_map;
+
+  // Set home stripe
+  stripe_map.set(_stripes.stripe_id(stripe));
+
+  // Set steal victim stripes
+  const size_t nvictims_capped = MIN2(nvictims, _stripes.nstripes() - 1);
+  for (size_t i = 0; i < nvictims_capped; i++) {
+    stripe = _stripes.stripe_next(stripe);
+    stripe_map.set(_stripes.stripe_id(stripe));
+  }
+
+  return stripe_map;
+}
+
 void ZMark::prepare_mark() {
   // Increment global sequence number to invalidate
   // marking information for all pages.
   ZGlobalSeqNum++;
 
-  // Reset flush/continue counters
-  _nproactiveflush = 0;
-  _nterminateflush = 0;
-  _ntrycomplete = 0;
-  _ncontinue = 0;
+  // Reset restart/complete/continue counters
+  _nrestart = _ncomplete = _ncontinue = 0;
 
   // Set number of workers to use
   _nworkers = _workers->nconcurrent();
@@ -134,21 +140,9 @@ void ZMark::start() {
   prepare_mark();
 }
 
-void ZMark::prepare_work() {
-  assert(_nworkers == _workers->nconcurrent(), "Invalid number of workers");
-
+void ZMark::reset(uint nworkers) {
   // Set number of active workers
-  _terminate.reset(_nworkers);
-
-  // Reset flush counters
-  _work_nproactiveflush = _work_nterminateflush = 0;
-  _work_terminateflush = true;
-}
-
-void ZMark::finish_work() {
-  // Accumulate proactive/terminate flush counters
-  _nproactiveflush += _work_nproactiveflush;
-  _nterminateflush += _work_nterminateflush;
+  _terminate.reset(nworkers);
 }
 
 bool ZMark::is_array(uintptr_t addr) const {
@@ -311,8 +305,8 @@ void ZMark::mark_and_follow(ZMarkCache* cache, ZMarkStackEntry entry) {
   }
 }
 
-template <typename T>
-bool ZMark::drain(ZMarkStripe* stripe, ZMarkThreadLocalStacks* stacks, ZMarkCache* cache, T* timeout) {
+template <typename Context>
+bool ZMark::drain(ZMarkStripe* stripe, ZMarkThreadLocalStacks* stacks, ZMarkCache* cache, Context* context) {
   ZMarkStackEntry entry;
 
   // Drain stripe stacks
@@ -320,7 +314,7 @@ bool ZMark::drain(ZMarkStripe* stripe, ZMarkThreadLocalStacks* stacks, ZMarkCach
     mark_and_follow(cache, entry);
 
     // Check timeout
-    if (timeout->has_expired()) {
+    if (context->should_timeout()) {
       // Timeout
       return false;
     }
@@ -330,246 +324,86 @@ bool ZMark::drain(ZMarkStripe* stripe, ZMarkThreadLocalStacks* stacks, ZMarkCach
   return true;
 }
 
-template <typename T>
-bool ZMark::drain_and_flush(ZMarkStripe* stripe, ZMarkThreadLocalStacks* stacks, ZMarkCache* cache, T* timeout) {
-  const bool success = drain(stripe, stacks, cache, timeout);
+void ZMark::publish(ZMarkThreadLocalStacks* stacks) {
+  // Flush stacks
+  const ZMarkStripeMap published = stacks->flush(&_allocator, &_stripes);
 
-  // Flush and publish worker stacks
-  stacks->flush(&_allocator, &_stripes);
+  // Signal to workers that more work is available
+  _terminate.set_active_stripes(published);
+}
+
+void ZMark::free(ZMarkThreadLocalStacks* stacks) {
+  // Make sure all stacks have been published
+  assert(stacks->is_empty(), "Should be empty");
+
+  // Free remaining stacks
+  stacks->free(&_allocator);
+}
+
+template <typename Context>
+bool ZMark::drain_and_publish(ZMarkStripe* stripe, ZMarkThreadLocalStacks* stacks, ZMarkCache* cache, Context* context) {
+  // Drain stripe
+  const bool success = drain(stripe, stacks, cache, context);
+
+  // Publish stacks
+  publish(stacks);
 
   return success;
 }
 
-bool ZMark::try_steal(ZMarkStripe* stripe, ZMarkThreadLocalStacks* stacks) {
-  // Try to steal a stack from another stripe
-  for (ZMarkStripe* victim_stripe = _stripes.stripe_next(stripe);
-       victim_stripe != stripe;
-       victim_stripe = _stripes.stripe_next(victim_stripe)) {
-    ZMarkStack* const stack = victim_stripe->steal_stack();
-    if (stack != NULL) {
-      // Success, install the stolen stack
-      stacks->install(&_stripes, stripe, stack);
-      return true;
+bool ZMark::steal(ZMarkStripe* stripe, ZMarkThreadLocalStacks* stacks, ZMarkStripeMap stripe_map) {
+  // Try to steal a stack from another stripe in the stripe map
+  ZMarkStripe* victim = _stripes.stripe_next(stripe);
+  while (victim != stripe) {
+    const size_t victim_id = _stripes.stripe_id(victim);
+    if (stripe_map.get(victim_id)) {
+      ZMarkStack* const stack = victim->steal_stack();
+      if (stack != NULL) {
+        // Success, install the stolen stack
+        stacks->install(&_stripes, stripe, stack);
+        return true;
+      }
     }
+
+    // Failed, try next stripe
+    victim = _stripes.stripe_next(victim);
   }
 
   // Nothing to steal
   return false;
 }
 
-void ZMark::idle() const {
-  ZStatTimer timer(ZSubPhaseConcurrentMarkIdle);
-  os::naked_short_sleep(1);
+bool ZMark::idle(ZMarkStripeMap stripe_map) {
+  return _terminate.idle(stripe_map);
 }
 
-class ZMarkFlushAndFreeStacksClosure : public HandshakeClosure {
-private:
-  ZMark* const _mark;
-  bool         _flushed;
-
-public:
-  ZMarkFlushAndFreeStacksClosure(ZMark* mark) :
-      HandshakeClosure("ZMarkFlushAndFreeStacks"),
-      _mark(mark),
-      _flushed(false) {}
-
-  void do_thread(Thread* thread) {
-    if (_mark->flush_and_free(thread)) {
-      _flushed = true;
-    }
-  }
-
-  bool flushed() const {
-    return _flushed;
-  }
-};
-
-bool ZMark::flush(bool at_safepoint) {
-  ZMarkFlushAndFreeStacksClosure cl(this);
-  if (at_safepoint) {
-    Threads::threads_do(&cl);
-  } else {
-    Handshake::execute(&cl);
-  }
-
-  // Returns true if more work is available
-  return cl.flushed() || !_stripes.is_empty();
-}
-
-bool ZMark::try_flush(volatile size_t* nflush) {
-  Atomic::inc(nflush);
-
-  ZStatTimer timer(ZSubPhaseConcurrentMarkTryFlush);
-  return flush(false /* at_safepoint */);
-}
-
-bool ZMark::try_proactive_flush() {
-  // Only do proactive flushes from worker 0
-  if (ZThread::worker_id() != 0) {
-    return false;
-  }
-
-  if (Atomic::load(&_work_nproactiveflush) == ZMarkProactiveFlushMax ||
-      Atomic::load(&_work_nterminateflush) != 0) {
-    // Limit reached or we're trying to terminate
-    return false;
-  }
-
-  return try_flush(&_work_nproactiveflush);
-}
-
-bool ZMark::try_terminate() {
-  ZStatTimer timer(ZSubPhaseConcurrentMarkTryTerminate);
-
-  if (_terminate.enter_stage0()) {
-    // Last thread entered stage 0, flush
-    if (Atomic::load(&_work_terminateflush) &&
-        Atomic::load(&_work_nterminateflush) != ZMarkTerminateFlushMax) {
-      // Exit stage 0 to allow other threads to continue marking
-      _terminate.exit_stage0();
-
-      // Flush before termination
-      if (!try_flush(&_work_nterminateflush)) {
-        // No more work available, skip further flush attempts
-        Atomic::store(&_work_terminateflush, false);
-      }
-
-      // Don't terminate, regardless of whether we successfully
-      // flushed out more work or not. We've already exited
-      // termination stage 0, to allow other threads to continue
-      // marking, so this thread has to return false and also
-      // make another round of attempted marking.
-      return false;
-    }
-  }
+template <typename Context>
+void ZMark::work() {
+  Context context;
+  ZMarkCache cache(_stripes.nstripes());
+  ZMarkStripe* const stripe = _stripes.stripe_for_worker(_nworkers, ZThread::worker_id());
+  ZMarkStripeMap const stripe_map(calculate_stripe_map(stripe, context.nvictim_stripes()));
+  ZMarkThreadLocalStacks* const stacks = ZThreadLocalData::stacks(Thread::current());
 
   for (;;) {
-    if (_terminate.enter_stage1()) {
-      // Last thread entered stage 1, terminate
-      return true;
-    }
-
-    // Idle to give the other threads
-    // a chance to enter termination.
-    idle();
-
-    if (!_terminate.try_exit_stage1()) {
-      // All workers in stage 1, terminate
-      return true;
-    }
-
-    if (_terminate.try_exit_stage0()) {
-      // More work available, don't terminate
-      return false;
-    }
-  }
-}
-
-class ZMarkNoTimeout : public StackObj {
-public:
-  bool has_expired() {
-    return false;
-  }
-};
-
-void ZMark::work_without_timeout(ZMarkCache* cache, ZMarkStripe* stripe, ZMarkThreadLocalStacks* stacks) {
-  ZStatTimer timer(ZSubPhaseConcurrentMark);
-  ZMarkNoTimeout no_timeout;
-
-  for (;;) {
-    drain_and_flush(stripe, stacks, cache, &no_timeout);
-
-    if (try_steal(stripe, stacks)) {
-      // Stole work
-      continue;
-    }
-
-    if (try_proactive_flush()) {
-      // Work available
-      continue;
-    }
-
-    if (try_terminate()) {
-      // Terminate
-      break;
-    }
-  }
-}
-
-class ZMarkTimeout : public StackObj {
-private:
-  const Ticks    _start;
-  const uint64_t _timeout;
-  const uint64_t _check_interval;
-  uint64_t       _check_at;
-  uint64_t       _check_count;
-  bool           _expired;
-
-public:
-  ZMarkTimeout(uint64_t timeout_in_micros) :
-      _start(Ticks::now()),
-      _timeout(_start.value() + TimeHelper::micros_to_counter(timeout_in_micros)),
-      _check_interval(200),
-      _check_at(_check_interval),
-      _check_count(0),
-      _expired(false) {}
-
-  ~ZMarkTimeout() {
-    const Tickspan duration = Ticks::now() - _start;
-    log_debug(gc, marking)("Mark With Timeout (%s): %s, " UINT64_FORMAT " oops, %.3fms",
-                           ZThread::name(), _expired ? "Expired" : "Completed",
-                           _check_count, TimeHelper::counter_to_millis(duration.value()));
-  }
-
-  bool has_expired() {
-    if (++_check_count == _check_at) {
-      _check_at += _check_interval;
-      if ((uint64_t)Ticks::now().value() >= _timeout) {
-        // Timeout
-        _expired = true;
-      }
-    }
-
-    return _expired;
-  }
-};
-
-void ZMark::work_with_timeout(ZMarkCache* cache, ZMarkStripe* stripe, ZMarkThreadLocalStacks* stacks, uint64_t timeout_in_micros) {
-  ZStatTimer timer(ZSubPhaseMarkTryComplete);
-  ZMarkTimeout timeout(timeout_in_micros);
-
-  for (;;) {
-    if (!drain_and_flush(stripe, stacks, cache, &timeout)) {
+    if (!drain_and_publish(stripe, stacks, &cache, &context)) {
       // Timed out
       break;
     }
 
-    if (try_steal(stripe, stacks)) {
+    if (steal(stripe, stacks, stripe_map)) {
       // Stole work
       continue;
     }
 
-    // Terminate
-    break;
+    if (idle(stripe_map)) {
+      // Terminate
+      break;
+    }
   }
-}
-
-void ZMark::work(uint64_t timeout_in_micros) {
-  ZMarkCache cache(_stripes.nstripes());
-  ZMarkStripe* const stripe = _stripes.stripe_for_worker(_nworkers, ZThread::worker_id());
-  ZMarkThreadLocalStacks* const stacks = ZThreadLocalData::stacks(Thread::current());
-
-  if (timeout_in_micros == 0) {
-    work_without_timeout(&cache, stripe, stacks);
-  } else {
-    work_with_timeout(&cache, stripe, stacks, timeout_in_micros);
-  }
-
-  // Make sure stacks have been flushed
-  assert(stacks->is_empty(&_stripes), "Should be empty");
 
   // Free remaining stacks
-  stacks->free(&_allocator);
+  free(stacks);
 }
 
 class ZMarkConcurrentRootsIteratorClosure : public ZRootsIteratorClosure {
@@ -625,35 +459,49 @@ public:
   virtual void work() {
     _roots.oops_do(&_cl);
 
-    // Flush and free worker stacks. Needed here since
-    // the set of workers executing during root scanning
-    // can be different from the set of workers executing
-    // during mark.
-    _mark->flush_and_free();
+    // Flush and free worker stacks. Needed here since the set of
+    // workers executing during root scanning can be different from
+    // the set of workers executing during mark.
+    _mark->flush(Thread::current(), true /* free_remaining */);
   }
 };
 
+template <typename Context>
 class ZMarkTask : public ZTask {
 private:
-  ZMark* const   _mark;
-  const uint64_t _timeout_in_micros;
+  ZMark* const _mark;
 
 public:
-  ZMarkTask(ZMark* mark, uint64_t timeout_in_micros = 0) :
+  ZMarkTask(ZMark* mark, uint nworkers) :
       ZTask("ZMarkTask"),
-      _mark(mark),
-      _timeout_in_micros(timeout_in_micros) {
-    _mark->prepare_work();
-  }
-
-  ~ZMarkTask() {
-    _mark->finish_work();
+      _mark(mark) {
+    _mark->reset(nworkers);
   }
 
   virtual void work() {
-    _mark->work(_timeout_in_micros);
+    _mark->work<Context>();
   }
 };
+
+bool ZMark::restart() {
+  // Restart a limited number of times
+  const uint32_t max = ZMarkRestartMax * (_ncontinue + 1);
+  if (_nrestart == max) {
+    return false;
+  }
+
+  // Flush VM and Java threads
+  ZStatTimer timer(ZSubPhaseConcurrentMarkFlushRestart);
+  _flush.vm_and_java_threads();
+
+  // Restart marking if there are active stripes
+  if (_terminate.has_active_stripes()) {
+    _nrestart++;
+    return true;
+  }
+
+  return false;
+}
 
 void ZMark::mark(bool initial) {
   if (initial) {
@@ -661,38 +509,51 @@ void ZMark::mark(bool initial) {
     _workers->run_concurrent(&task);
   }
 
-  ZMarkTask task(this);
-  _workers->run_concurrent(&task);
+  do {
+    ZMarkFlushPeriodic flush(this);
+    ZMarkTask<ZMarkContext> task(this, _workers->nconcurrent());
+    _workers->run_concurrent(&task);
+  } while (restart());
 }
 
-bool ZMark::try_complete() {
-  _ntrycomplete++;
-
-  // Use nconcurrent number of worker threads to maintain the
-  // worker/stripe distribution used during concurrent mark.
-  ZMarkTask task(this, ZMarkCompleteTimeout);
-  _workers->run_concurrent(&task);
-
-  // Successful if all stripes are empty
-  return _stripes.is_empty();
-}
-
-bool ZMark::try_end() {
-  // Flush all mark stacks
-  if (!flush(true /* at_safepoint */)) {
-    // Mark completed
-    return true;
+bool ZMark::complete() {
+  // Verification
+  if (ZVerifyMarking) {
+    verify_termination();
   }
 
-  // Try complete marking by doing a limited
-  // amount of mark work in this phase.
-  return try_complete();
+  // Flush all threads
+  _flush.all_threads();
+
+  // Verification
+  if (ZVerifyMarking) {
+    verify_termination();
+  }
+
+  if (_terminate.has_active_stripes()) {
+    // More work available. Continue marking inside for a limited
+    // about of time. We mark using a single thread to avoid the
+    // cost of starting and stopping worker threads, which could
+    // otherwise consume a considerable amount of our time budget.
+    ZStatTimer timer(ZSubPhasePauseMarkEndComplete);
+    ZMarkTask<ZMarkEndContext> task(this, 1 /* nworkers */);
+    _workers->run_serial(&task);
+    _ncomplete++;
+  }
+
+  // Verification
+  if (ZVerifyMarking) {
+    verify_termination();
+  }
+
+  // Marking is complete if there are no active stripes
+  return !_terminate.has_active_stripes();
 }
 
 bool ZMark::end() {
-  // Try end marking
-  if (!try_end()) {
-    // Mark not completed
+  // Try complete marking
+  if (!complete()) {
+    // Continue concurrent mark
     _ncontinue++;
     return false;
   }
@@ -703,43 +564,44 @@ bool ZMark::end() {
   }
 
   // Update statistics
-  ZStatMark::set_at_mark_end(_nproactiveflush, _nterminateflush, _ntrycomplete, _ncontinue);
+  ZStatMark::set_at_mark_end(_nrestart, _ncomplete, _ncontinue);
 
   // Mark completed
   return true;
 }
 
-void ZMark::flush_and_free() {
-  Thread* const thread = Thread::current();
-  flush_and_free(thread);
+void ZMark::flush(Thread* thread, bool free_remaining) {
+  ZMarkThreadLocalStacks* const stacks = ZThreadLocalData::stacks(thread);
+
+  publish(stacks);
+
+  if (free_remaining) {
+    free(stacks);
+  }
 }
 
-bool ZMark::flush_and_free(Thread* thread) {
-  ZMarkThreadLocalStacks* const stacks = ZThreadLocalData::stacks(thread);
-  const bool flushed = stacks->flush(&_allocator, &_stripes);
-  stacks->free(&_allocator);
-  return flushed;
+void ZMark::verify_termination() const {
+  guarantee(_terminate.has_active_stripes() != _stripes.is_empty(), "Termination state mismatch");
 }
 
 class ZVerifyMarkStacksEmptyClosure : public ThreadClosure {
-private:
-  const ZMarkStripeSet* const _stripes;
-
 public:
-  ZVerifyMarkStacksEmptyClosure(const ZMarkStripeSet* stripes) :
-      _stripes(stripes) {}
-
-  void do_thread(Thread* thread) {
+  virtual void do_thread(Thread* thread) {
     ZMarkThreadLocalStacks* const stacks = ZThreadLocalData::stacks(thread);
-    guarantee(stacks->is_empty(_stripes), "Should be empty");
+    guarantee(stacks->is_empty(), "Should be empty");
   }
 };
 
-void ZMark::verify_all_stacks_empty() const {
-  // Verify thread stacks
-  ZVerifyMarkStacksEmptyClosure cl(&_stripes);
+void ZMark::verify_thread_stacks_empty() const {
+  ZVerifyMarkStacksEmptyClosure cl;
   Threads::threads_do(&cl);
+}
 
-  // Verify stripe stacks
+void ZMark::verify_stripe_stacks_empty() const {
   guarantee(_stripes.is_empty(), "Should be empty");
+}
+
+void ZMark::verify_all_stacks_empty() const {
+  verify_thread_stacks_empty();
+  verify_stripe_stacks_empty();
 }

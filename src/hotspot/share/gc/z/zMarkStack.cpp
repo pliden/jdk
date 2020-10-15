@@ -78,6 +78,12 @@ ZMarkStripe* ZMarkStripeSet::stripe_for_worker(uint nworkers, uint worker_id) {
   return &_stripes[index];
 }
 
+ZMarkStripeMap ZMarkThreadLocalStacks::get_and_reset_published() {
+  const ZMarkStripeMap published = _published;
+  _published = ZMarkStripeMap();
+  return published;
+}
+
 ZMarkThreadLocalStacks::ZMarkThreadLocalStacks() :
     _magazine(NULL) {
   for (size_t i = 0; i < ZMarkStripesMax; i++) {
@@ -85,8 +91,10 @@ ZMarkThreadLocalStacks::ZMarkThreadLocalStacks() :
   }
 }
 
-bool ZMarkThreadLocalStacks::is_empty(const ZMarkStripeSet* stripes) const {
-  for (size_t i = 0; i < stripes->nstripes(); i++) {
+bool ZMarkThreadLocalStacks::is_empty() const {
+  // This function is used for verification, so we check
+  // all stripes and not just the currently active stripes.
+  for (size_t i = 0; i < ZMarkStripesMax; i++) {
     ZMarkStack* const stack = _stacks[i];
     if (stack != NULL) {
       return false;
@@ -137,7 +145,19 @@ void ZMarkThreadLocalStacks::free_stack(ZMarkStackAllocator* allocator, ZMarkSta
   }
 }
 
+void ZMarkThreadLocalStacks::publish_stack(ZMarkStripeSet* stripes,
+                                           ZMarkStripe* stripe,
+                                           ZMarkStack* stack,
+                                           bool publish) {
+  // Publish stack on stripe
+  stripe->publish_stack(stack, publish);
+
+  // Update published state
+  _published.set(stripes->stripe_id(stripe));
+}
+
 bool ZMarkThreadLocalStacks::push_slow(ZMarkStackAllocator* allocator,
+                                       ZMarkStripeSet* stripes,
                                        ZMarkStripe* stripe,
                                        ZMarkStack** stackp,
                                        ZMarkStackEntry entry,
@@ -160,7 +180,7 @@ bool ZMarkThreadLocalStacks::push_slow(ZMarkStackAllocator* allocator,
     }
 
     // Publish/Overflow and uninstall stack
-    stripe->publish_stack(stack, publish);
+    publish_stack(stripes, stripe, stack, publish);
     *stackp = stack = NULL;
   }
 }
@@ -192,9 +212,7 @@ bool ZMarkThreadLocalStacks::pop_slow(ZMarkStackAllocator* allocator,
   }
 }
 
-bool ZMarkThreadLocalStacks::flush(ZMarkStackAllocator* allocator, ZMarkStripeSet* stripes) {
-  bool flushed = false;
-
+ZMarkStripeMap ZMarkThreadLocalStacks::flush(ZMarkStackAllocator* allocator, ZMarkStripeSet* stripes) {
   // Flush all stacks
   for (size_t i = 0; i < stripes->nstripes(); i++) {
     ZMarkStripe* const stripe = stripes->stripe_at(i);
@@ -204,17 +222,21 @@ bool ZMarkThreadLocalStacks::flush(ZMarkStackAllocator* allocator, ZMarkStripeSe
       continue;
     }
 
+    // This function can be called outside of the mark phase,
+    // if a Java thread terminates. In this case we should
+    // never find any stacks to publish.
+    assert(ZGlobalPhase == ZPhaseMark, "Invalid state");
+
     // Free/Publish and uninstall stack
     if (stack->is_empty()) {
       free_stack(allocator, stack);
     } else {
-      stripe->publish_stack(stack);
-      flushed = true;
+      publish_stack(stripes, stripe, stack, true /* publish */);
     }
     *stackp = NULL;
   }
 
-  return flushed;
+  return get_and_reset_published();
 }
 
 void ZMarkThreadLocalStacks::free(ZMarkStackAllocator* allocator) {

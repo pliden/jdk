@@ -262,8 +262,8 @@ void ZHeap::mark(bool initial) {
   _mark.mark(initial);
 }
 
-void ZHeap::mark_flush_and_free(Thread* thread) {
-  _mark.flush_and_free(thread);
+void ZHeap::mark_flush(Thread* thread) {
+  _mark.flush(thread, true /* free_remaining */);
 }
 
 bool ZHeap::mark_end() {

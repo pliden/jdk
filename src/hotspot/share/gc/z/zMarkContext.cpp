@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2017, 2018, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2020, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -21,27 +21,25 @@
  * questions.
  */
 
-#ifndef SHARE_GC_Z_ZMARKTERMINATE_HPP
-#define SHARE_GC_Z_ZMARKTERMINATE_HPP
+#include "precompiled.hpp"
+#include "gc/z/zGlobals.hpp"
+#include "gc/z/zMarkContext.hpp"
+#include "logging/log.hpp"
+#include "runtime/os.hpp"
+#include "runtime/timer.hpp"
 
-#include "gc/z/zMarkStack.hpp"
-#include "gc/z/zMarkTerminateState.hpp"
+ZMarkEndContext::ZMarkEndContext() :
+    _timeout_start(os::elapsed_counter()),
+    _timeout_end(_timeout_start + TimeHelper::micros_to_counter(ZMarkEndTimeout)),
+    _timeout_check_interval(100),
+    _timeout_check_count(0),
+    _timeout_check_at(_timeout_check_interval),
+    _timeout_expired(false) {}
 
-class ZMarkTerminate {
-private:
-  static const uint _terminate = (uint)-1;
-
-  ZMarkTerminateState _state;
-
-  bool enter_idle_mode(ZMarkStripeMap stripe_map);
-  bool exit_idle_mode(ZMarkStripeMap stripe_map);
-  bool enter_terminate_mode();
-
-public:
-  void reset(uint nworkers);
-  void set_active_stripes(ZMarkStripeMap stripe_map);
-  bool has_active_stripes() const;
-  bool idle(ZMarkStripeMap stripe_map);
-};
-
-#endif // SHARE_GC_Z_ZMARKTERMINATE_HPP
+ZMarkEndContext::~ZMarkEndContext() {
+  const uint64_t duration = os::elapsed_counter() - _timeout_start;
+  log_debug(gc, marking)("Mark End: %s, " UINT64_FORMAT " oops, %.3fms",
+                         _timeout_expired ? "Timed out" : "Completed",
+                         _timeout_check_count,
+                         TimeHelper::counter_to_millis(duration));
+}

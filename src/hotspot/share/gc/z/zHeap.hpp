@@ -125,7 +125,7 @@ public:
   template <bool follow, bool finalizable, bool publish> void mark_object(uintptr_t addr);
   void mark_start();
   void mark(bool initial);
-  void mark_flush_and_free(Thread* thread);
+  void mark_flush(Thread* thread);
   bool mark_end();
   void keep_alive(oop obj);
 

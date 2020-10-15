@@ -199,7 +199,7 @@ inline ZMarkStripe* ZMarkStripeSet::stripe_at(size_t index) {
   return &_stripes[index];
 }
 
-inline ZMarkStripe* ZMarkStripeSet::stripe_next(ZMarkStripe* stripe) {
+inline ZMarkStripe* ZMarkStripeSet::stripe_next(const ZMarkStripe* stripe) {
   const size_t index = (stripe_id(stripe) + 1) & _nstripes_mask;
   assert(index < _nstripes, "Invalid index");
   return &_stripes[index];
@@ -209,6 +209,23 @@ inline ZMarkStripe* ZMarkStripeSet::stripe_for_addr(uintptr_t addr) {
   const size_t index = (addr >> ZMarkStripeShift) & _nstripes_mask;
   assert(index < _nstripes, "Invalid index");
   return &_stripes[index];
+}
+
+inline ZMarkStripeMap::ZMarkStripeMap() :
+    _map(0) {}
+
+inline void ZMarkStripeMap::set(size_t stripe_id) {
+  assert(stripe_id < (sizeof(_map) * BitsPerByte), "Invalid stripe id");
+  _map |= (uint32_t)1 << stripe_id;
+}
+
+inline bool ZMarkStripeMap::get(size_t stripe_id) const {
+  assert(stripe_id < (sizeof(_map) * BitsPerByte), "Invalid stripe id");
+  return (_map & ((uint32_t)1 << stripe_id)) != 0;
+}
+
+inline uint32_t ZMarkStripeMap::get() const {
+  return _map;
 }
 
 inline void ZMarkThreadLocalStacks::install(ZMarkStripeSet* stripes,
@@ -230,7 +247,7 @@ inline bool ZMarkThreadLocalStacks::push(ZMarkStackAllocator* allocator,
     return true;
   }
 
-  return push_slow(allocator, stripe, stackp, entry, publish);
+  return push_slow(allocator, stripes, stripe, stackp, entry, publish);
 }
 
 inline bool ZMarkThreadLocalStacks::pop(ZMarkStackAllocator* allocator,

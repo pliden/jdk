@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2017, 2018, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2020, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -21,27 +21,53 @@
  * questions.
  */
 
-#ifndef SHARE_GC_Z_ZMARKTERMINATE_HPP
-#define SHARE_GC_Z_ZMARKTERMINATE_HPP
+#ifndef SHARE_GC_Z_ZMARKFLUSH_HPP
+#define SHARE_GC_Z_ZMARKFLUSH_HPP
 
-#include "gc/z/zMarkStack.hpp"
-#include "gc/z/zMarkTerminateState.hpp"
+#include "runtime/handshake.hpp"
+#include "runtime/task.hpp"
 
-class ZMarkTerminate {
+class ZMark;
+
+class ZMarkFlushClosure : public HandshakeClosure {
 private:
-  static const uint _terminate = (uint)-1;
-
-  ZMarkTerminateState _state;
-
-  bool enter_idle_mode(ZMarkStripeMap stripe_map);
-  bool exit_idle_mode(ZMarkStripeMap stripe_map);
-  bool enter_terminate_mode();
+  ZMark* const _mark;
+  const bool   _free_remaining;
 
 public:
-  void reset(uint nworkers);
-  void set_active_stripes(ZMarkStripeMap stripe_map);
-  bool has_active_stripes() const;
-  bool idle(ZMarkStripeMap stripe_map);
+  ZMarkFlushClosure(ZMark* mark, bool free_remaining);
+
+  virtual void do_thread(Thread* thread);
 };
 
-#endif // SHARE_GC_Z_ZMARKTERMINATE_HPP
+class ZMarkFlushPeriodicTask : public PeriodicTask {
+private:
+  ZMark* const _mark;
+
+public:
+  ZMarkFlushPeriodicTask(ZMark* mark);
+
+  virtual void task();
+};
+
+class ZMarkFlushPeriodic {
+private:
+  ZMarkFlushPeriodicTask _task;
+
+public:
+  ZMarkFlushPeriodic(ZMark* mark);
+  ~ZMarkFlushPeriodic();
+};
+
+class ZMarkFlush {
+private:
+  ZMark* const _mark;
+
+public:
+  ZMarkFlush(ZMark* mark);
+
+  void vm_and_java_threads();
+  void all_threads();
+};
+
+#endif // SHARE_GC_Z_ZMARKFLUSH_HPP

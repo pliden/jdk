@@ -148,11 +148,13 @@ const size_t      ZMarkCacheSize                = 1024; // Must be a power of tw
 const size_t      ZMarkPartialArrayMinSizeShift = 12; // 4K
 const size_t      ZMarkPartialArrayMinSize      = (size_t)1 << ZMarkPartialArrayMinSizeShift;
 
-// Max number of proactive/terminate flush attempts
-const size_t      ZMarkProactiveFlushMax        = 10;
-const size_t      ZMarkTerminateFlushMax        = 3;
+// Mark end timeout
+const uint64_t    ZMarkFlushInterval            = 100; // ms
 
-// Try complete mark timeout
-const uint64_t    ZMarkCompleteTimeout          = 1000; // us
+// Mark restart limit
+const uint32_t    ZMarkRestartMax               = 10;
+
+// Mark end timeout
+const uint64_t    ZMarkEndTimeout               = 200; // us
 
 #endif // SHARE_GC_Z_ZGLOBALS_HPP

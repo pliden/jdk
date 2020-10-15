@@ -402,17 +402,13 @@ public:
 class ZStatMark : public AllStatic {
 private:
   static size_t _nstripes;
-  static size_t _nproactiveflush;
-  static size_t _nterminateflush;
-  static size_t _ntrycomplete;
-  static size_t _ncontinue;
+  static uint32_t _nrestart;
+  static uint32_t _ncomplete;
+  static uint32_t _ncontinue;
 
 public:
   static void set_at_mark_start(size_t nstripes);
-  static void set_at_mark_end(size_t nproactiveflush,
-                              size_t nterminateflush,
-                              size_t ntrycomplete,
-                              size_t ncontinue);
+  static void set_at_mark_end(uint32_t nrestart, uint32_t ncomplete, uint32_t ncontinue);
 
   static void print();
 };

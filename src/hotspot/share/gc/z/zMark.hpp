@@ -24,6 +24,7 @@
 #ifndef SHARE_GC_Z_ZMARK_HPP
 #define SHARE_GC_Z_ZMARK_HPP
 
+#include "gc/z/zMarkFlush.hpp"
 #include "gc/z/zMarkStack.hpp"
 #include "gc/z/zMarkStackAllocator.hpp"
 #include "gc/z/zMarkStackEntry.hpp"
@@ -37,24 +38,23 @@ class ZPageTable;
 class ZWorkers;
 
 class ZMark {
-  friend class ZMarkTask;
+  template <typename Context> friend class ZMarkTask;
 
 private:
   ZWorkers* const     _workers;
   ZPageTable* const   _page_table;
   ZMarkStackAllocator _allocator;
   ZMarkStripeSet      _stripes;
+  ZMarkFlush          _flush;
   ZMarkTerminate      _terminate;
-  volatile bool       _work_terminateflush;
-  volatile size_t     _work_nproactiveflush;
-  volatile size_t     _work_nterminateflush;
-  size_t              _nproactiveflush;
-  size_t              _nterminateflush;
-  size_t              _ntrycomplete;
-  size_t              _ncontinue;
+  uint32_t            _nrestart;
+  uint32_t            _ncomplete;
+  uint32_t            _ncontinue;
   uint                _nworkers;
 
   size_t calculate_nstripes(uint nworkers) const;
+  ZMarkStripeMap calculate_stripe_map(ZMarkStripe* stripe, size_t nvictims);
+
   void prepare_mark();
 
   bool is_array(uintptr_t addr) const;
@@ -68,35 +68,29 @@ private:
   bool try_mark_object(ZMarkCache* cache, uintptr_t addr, bool finalizable);
   void mark_and_follow(ZMarkCache* cache, ZMarkStackEntry entry);
 
-  template <typename T> bool drain(ZMarkStripe* stripe,
-                                   ZMarkThreadLocalStacks* stacks,
-                                   ZMarkCache* cache,
-                                   T* timeout);
-  template <typename T> bool drain_and_flush(ZMarkStripe* stripe,
-                                             ZMarkThreadLocalStacks* stacks,
-                                             ZMarkCache* cache,
-                                             T* timeout);
-  bool try_steal(ZMarkStripe* stripe, ZMarkThreadLocalStacks* stacks);
-  void idle() const;
-  bool flush(bool at_safepoint);
-  bool try_proactive_flush();
-  bool try_flush(volatile size_t* nflush);
-  bool try_terminate();
-  bool try_complete();
-  bool try_end();
+  void publish(ZMarkThreadLocalStacks* stacks);
+  void free(ZMarkThreadLocalStacks* stacks);
 
-  void prepare_work();
-  void finish_work();
+  template <typename Context>
+  bool drain(ZMarkStripe* stripe, ZMarkThreadLocalStacks* stacks, ZMarkCache* cache, Context* context);
 
-  void work_without_timeout(ZMarkCache* cache,
-                            ZMarkStripe* stripe,
-                            ZMarkThreadLocalStacks* stacks);
-  void work_with_timeout(ZMarkCache* cache,
-                         ZMarkStripe* stripe,
-                         ZMarkThreadLocalStacks* stacks,
-                         uint64_t timeout_in_micros);
-  void work(uint64_t timeout_in_micros);
+  template <typename Context>
+  bool drain_and_publish(ZMarkStripe* stripe, ZMarkThreadLocalStacks* stacks, ZMarkCache* cache, Context* context);
 
+  bool steal(ZMarkStripe* stripe, ZMarkThreadLocalStacks* stacks, ZMarkStripeMap stripe_map);
+  bool idle(ZMarkStripeMap stripe_map);
+
+  void reset(uint nworkers);
+
+  template <typename Context>
+  void work();
+
+  bool restart();
+  bool complete();
+
+  void verify_termination() const;
+  void verify_thread_stacks_empty() const;
+  void verify_stripe_stacks_empty() const;
   void verify_all_stacks_empty() const;
 
 public:
@@ -104,14 +98,14 @@ public:
 
   bool is_initialized() const;
 
-  template <bool follow, bool finalizable, bool publish> void mark_object(uintptr_t addr);
+  template <bool follow, bool finalizable, bool publish>
+  void mark_object(uintptr_t addr);
 
   void start();
   void mark(bool initial);
   bool end();
 
-  void flush_and_free();
-  bool flush_and_free(Thread* thread);
+  void flush(Thread* thread, bool free_remaining);
 };
 
 #endif // SHARE_GC_Z_ZMARK_HPP

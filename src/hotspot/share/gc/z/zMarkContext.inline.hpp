@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2017, 2018, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2020, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -21,27 +21,39 @@
  * questions.
  */
 
-#ifndef SHARE_GC_Z_ZMARKTERMINATE_HPP
-#define SHARE_GC_Z_ZMARKTERMINATE_HPP
+#ifndef SHARE_GC_Z_ZMARKCONTEXT_INLINE_HPP
+#define SHARE_GC_Z_ZMARKCONTEXT_INLINE_HPP
 
-#include "gc/z/zMarkStack.hpp"
-#include "gc/z/zMarkTerminateState.hpp"
+#include "gc/z/zGlobals.hpp"
+#include "gc/z/zMarkContext.hpp"
+#include "runtime/os.hpp"
 
-class ZMarkTerminate {
-private:
-  static const uint _terminate = (uint)-1;
+constexpr size_t ZMarkContext::nvictim_stripes() const {
+  // Steal work from at most three other stripes
+  return 3;
+}
 
-  ZMarkTerminateState _state;
+constexpr bool ZMarkContext::should_timeout() const {
+  // Never times out
+  return false;
+}
 
-  bool enter_idle_mode(ZMarkStripeMap stripe_map);
-  bool exit_idle_mode(ZMarkStripeMap stripe_map);
-  bool enter_terminate_mode();
+constexpr size_t ZMarkEndContext::nvictim_stripes() const {
+  // Steal work from all other stripes
+  return ZMarkStripesMax;
+}
 
-public:
-  void reset(uint nworkers);
-  void set_active_stripes(ZMarkStripeMap stripe_map);
-  bool has_active_stripes() const;
-  bool idle(ZMarkStripeMap stripe_map);
-};
+inline bool ZMarkEndContext::should_timeout() {
+  if (++_timeout_check_count == _timeout_check_at) {
+    const uint64_t now = os::elapsed_counter();
+    if (now >= _timeout_end) {
+      _timeout_expired = true;
+    } else {
+      _timeout_check_at += _timeout_check_interval;
+    }
+  }
 
-#endif // SHARE_GC_Z_ZMARKTERMINATE_HPP
+  return _timeout_expired;
+}
+
+#endif // SHARE_GC_Z_ZMARKCONTEXT_INLINE_HPP

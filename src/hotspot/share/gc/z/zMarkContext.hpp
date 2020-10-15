@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2017, 2018, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2020, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -21,27 +21,30 @@
  * questions.
  */
 
-#ifndef SHARE_GC_Z_ZMARKTERMINATE_HPP
-#define SHARE_GC_Z_ZMARKTERMINATE_HPP
+#ifndef SHARE_GC_Z_ZMARKCONTEXT_HPP
+#define SHARE_GC_Z_ZMARKCONTEXT_HPP
 
-#include "gc/z/zMarkStack.hpp"
-#include "gc/z/zMarkTerminateState.hpp"
-
-class ZMarkTerminate {
-private:
-  static const uint _terminate = (uint)-1;
-
-  ZMarkTerminateState _state;
-
-  bool enter_idle_mode(ZMarkStripeMap stripe_map);
-  bool exit_idle_mode(ZMarkStripeMap stripe_map);
-  bool enter_terminate_mode();
-
+class ZMarkContext {
 public:
-  void reset(uint nworkers);
-  void set_active_stripes(ZMarkStripeMap stripe_map);
-  bool has_active_stripes() const;
-  bool idle(ZMarkStripeMap stripe_map);
+  constexpr size_t nvictim_stripes() const;
+  constexpr bool should_timeout() const;
 };
 
-#endif // SHARE_GC_Z_ZMARKTERMINATE_HPP
+class ZMarkEndContext {
+private:
+  const uint64_t _timeout_start;
+  const uint64_t _timeout_end;
+  const uint64_t _timeout_check_interval;
+  uint64_t       _timeout_check_count;
+  uint64_t       _timeout_check_at;
+  bool           _timeout_expired;
+
+public:
+  ZMarkEndContext();
+  ~ZMarkEndContext();
+
+  constexpr size_t nvictim_stripes() const;
+  bool should_timeout();
+};
+
+#endif // SHARE_GC_Z_ZMARKCONTEXT_HPP

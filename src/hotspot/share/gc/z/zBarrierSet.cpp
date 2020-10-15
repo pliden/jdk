@@ -89,8 +89,8 @@ void ZBarrierSet::on_thread_attach(Thread* thread) {
 }
 
 void ZBarrierSet::on_thread_detach(Thread* thread) {
-  // Flush and free any remaining mark stacks
-  ZHeap::heap()->mark_flush_and_free(thread);
+  // Flush any remaining mark stacks
+  ZHeap::heap()->mark_flush(thread);
 }
 
 void ZBarrierSet::print_on(outputStream* st) const {

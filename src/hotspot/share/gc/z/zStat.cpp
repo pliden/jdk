@@ -1103,36 +1103,29 @@ void ZStatLoad::print() {
 // Stat mark
 //
 size_t ZStatMark::_nstripes;
-size_t ZStatMark::_nproactiveflush;
-size_t ZStatMark::_nterminateflush;
-size_t ZStatMark::_ntrycomplete;
-size_t ZStatMark::_ncontinue;
+uint32_t ZStatMark::_nrestart;
+uint32_t ZStatMark::_ncomplete;
+uint32_t ZStatMark::_ncontinue;
 
 void ZStatMark::set_at_mark_start(size_t nstripes) {
   _nstripes = nstripes;
 }
 
-void ZStatMark::set_at_mark_end(size_t nproactiveflush,
-                                size_t nterminateflush,
-                                size_t ntrycomplete,
-                                size_t ncontinue) {
-  _nproactiveflush = nproactiveflush;
-  _nterminateflush = nterminateflush;
-  _ntrycomplete = ntrycomplete;
+void ZStatMark::set_at_mark_end(uint32_t nrestart, uint32_t ncomplete, uint32_t ncontinue) {
+  _nrestart = nrestart;
+  _ncomplete = ncomplete;
   _ncontinue = ncontinue;
 }
 
 void ZStatMark::print() {
   log_info(gc, marking)("Mark: "
-                        SIZE_FORMAT " stripe(s), "
-                        SIZE_FORMAT " proactive flush(es), "
-                        SIZE_FORMAT " terminate flush(es), "
-                        SIZE_FORMAT " completion(s), "
-                        SIZE_FORMAT " continuation(s) ",
+                        SIZE_FORMAT " stripes, "
+                        UINT32_FORMAT " restarts, "
+                        UINT32_FORMAT " completionss, "
+                        UINT32_FORMAT " continuations ",
                         _nstripes,
-                        _nproactiveflush,
-                        _nterminateflush,
-                        _ntrycomplete,
+                        _nrestart,
+                        _ncomplete,
                         _ncontinue);
 }
 

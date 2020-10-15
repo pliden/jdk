@@ -65,6 +65,7 @@
   template(G1Concurrent)                          \
   template(G1TryInitiateConcMark)                 \
   template(ZMarkStart)                            \
+  template(ZMarkFlush)                            \
   template(ZMarkEnd)                              \
   template(ZRelocateStart)                        \
   template(ZVerify)                               \
