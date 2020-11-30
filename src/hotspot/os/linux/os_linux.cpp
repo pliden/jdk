@@ -3028,6 +3028,52 @@ int os::Linux::sched_getcpu_syscall(void) {
   return (retval == -1) ? retval : cpu;
 }
 
+static bool is_sched_getcpu_working() {
+  // Make sure we're not executing in an environment which has a broken sched_getcpu()
+  cpu_set_t orig_affinity;
+
+  // Get original affinity
+  if (sched_getaffinity(0, sizeof(cpu_set_t), &orig_affinity) == -1) {
+    log_error(os)("Failed to get CPU affinity: %s", os::strerror(errno));
+    return false;
+  }
+
+  int cpu_count = CPU_COUNT(&orig_affinity);
+
+  for (int i = 0; cpu_count != 0; i++) {
+    if (!CPU_ISSET(i, &orig_affinity)) {
+      continue;
+    }
+
+    cpu_count--;
+
+    cpu_set_t temp_affinity;
+    CPU_ZERO(&temp_affinity);
+    CPU_SET(i, &temp_affinity);
+
+    // Set temporary affinity
+    if (sched_setaffinity(0, sizeof(cpu_set_t), &temp_affinity) != 0) {
+      log_error(os)("Failed to set CPU affinity to CPU %d: %s", i, os::strerror(errno));
+      return false;
+    }
+
+    // Check that sched_getcpu() matches expected affinity
+    int cpu = sched_getcpu();
+    if (cpu != i) {
+      log_error(os)("Failed to correctly determine logical CPU id (got %d, expected %d)", cpu, i);
+      return false;
+    }
+  }
+
+  // Restore original affinity
+  if (sched_setaffinity(0, sizeof(cpu_set_t), &orig_affinity) == -1) {
+    log_error(os)("Failed to restore CPU affinity: %s", os::strerror(errno));
+    return false;
+  }
+
+  return true;
+}
+
 void os::Linux::sched_getcpu_init() {
   // sched_getcpu() should be in libc.
   set_sched_getcpu(CAST_TO_FN_PTR(sched_getcpu_func_t,
@@ -3041,6 +3087,11 @@ void os::Linux::sched_getcpu_init() {
 
   if (sched_getcpu() == -1) {
     vm_exit_during_initialization("getcpu(2) system call not supported by kernel");
+  }
+
+  // Check that sched_getcpu() works as expected
+  if (!is_sched_getcpu_working()) {
+    vm_exit_during_initialization("sched_getcpu() is not working as expected in this environment");
   }
 }
 
