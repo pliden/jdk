@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014, 2021, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2021, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -21,23 +21,24 @@
  * questions.
  */
 
-package gc.stringdedup;
+#ifndef SHARE_GC_Z_ZMARKCONTEXT_HPP
+#define SHARE_GC_Z_ZMARKCONTEXT_HPP
 
-/*
- * @test TestStringDeduplicationInterned
- * @summary Test string deduplication of interned strings
- * @bug 8029075
- * @requires vm.gc == "null" | vm.gc == "G1" | vm.gc == "Z"
- * @library /test/lib
- * @library /
- * @modules java.base/jdk.internal.misc:open
- * @modules java.base/java.lang:open
- *          java.management
- * @run driver gc.stringdedup.TestStringDeduplicationInterned
- */
+#include "gc/z/zMarkCache.hpp"
+#include "gc/shared/stringdedup/stringDedup.hpp"
+#include "memory/allocation.hpp"
 
-public class TestStringDeduplicationInterned {
-    public static void main(String[] args) throws Exception {
-        TestStringDeduplicationTools.testInterned();
-    }
-}
+class ZMarkContext : public StackObj {
+private:
+  ZMarkCache            _cache;
+  StringDedup::Requests _string_dedup_requests;
+
+public:
+  ZMarkContext(size_t nstripes);
+
+  void inc_live(ZPage* page, size_t bytes);
+
+  void try_deduplicate(oop obj);
+};
+
+#endif // SHARE_GC_Z_ZMARKCONTEXT_HPP

@@ -27,7 +27,7 @@ package gc.stringdedup;
  * @test TestStringDeduplicationPrintOptions
  * @summary Test string deduplication print options
  * @bug 8029075
- * @requires vm.gc == "null" | vm.gc == "G1" | vm.gc == "Shenandoah"
+ * @requires vm.gc == "null" | vm.gc == "G1" | vm.gc == "Shenandoah" | vm.gc == "Z"
  * @library /test/lib
  * @library /
  * @modules java.base/jdk.internal.misc:open

@@ -30,7 +30,7 @@
 #include "gc/z/zHeap.inline.hpp"
 #include "gc/z/zLock.inline.hpp"
 #include "gc/z/zMark.inline.hpp"
-#include "gc/z/zMarkCache.inline.hpp"
+#include "gc/z/zMarkContext.inline.hpp"
 #include "gc/z/zMarkStack.inline.hpp"
 #include "gc/z/zMarkTerminate.inline.hpp"
 #include "gc/z/zNMethod.hpp"
@@ -277,7 +277,7 @@ void ZMark::follow_object(oop obj, bool finalizable) {
   }
 }
 
-bool ZMark::try_mark_object(ZMarkCache* cache, uintptr_t addr, bool finalizable) {
+bool ZMark::try_mark_object(ZMarkContext* context, uintptr_t addr, bool finalizable) {
   ZPage* const page = _page_table->get(addr);
   if (page->is_allocating()) {
     // Newly allocated objects are implicitly marked
@@ -293,13 +293,13 @@ bool ZMark::try_mark_object(ZMarkCache* cache, uintptr_t addr, bool finalizable)
     // and alignment paddings can never be reclaimed.
     const size_t size = ZUtils::object_size(addr);
     const size_t aligned_size = align_up(size, page->object_alignment());
-    cache->inc_live(page, aligned_size);
+    context->inc_live(page, aligned_size);
   }
 
   return success;
 }
 
-void ZMark::mark_and_follow(ZMarkCache* cache, ZMarkStackEntry entry) {
+void ZMark::mark_and_follow(ZMarkContext* context, ZMarkStackEntry entry) {
   // Decode flags
   const bool finalizable = entry.finalizable();
   const bool partial_array = entry.partial_array();
@@ -312,7 +312,7 @@ void ZMark::mark_and_follow(ZMarkCache* cache, ZMarkStackEntry entry) {
   // Decode object address and follow flag
   const uintptr_t addr = entry.object_address();
 
-  if (!try_mark_object(cache, addr, finalizable)) {
+  if (!try_mark_object(context, addr, finalizable)) {
     // Already marked
     return;
   }
@@ -326,17 +326,21 @@ void ZMark::mark_and_follow(ZMarkCache* cache, ZMarkStackEntry entry) {
       follow_array_object(objArrayOop(ZOop::from_address(addr)), finalizable);
     }
   } else {
-    follow_object(ZOop::from_address(addr), finalizable);
+    const oop obj = ZOop::from_address(addr);
+    follow_object(obj, finalizable);
+
+    // Try deduplicate
+    context->try_deduplicate(obj);
   }
 }
 
 template <typename T>
-bool ZMark::drain(ZMarkStripe* stripe, ZMarkThreadLocalStacks* stacks, ZMarkCache* cache, T* timeout) {
+bool ZMark::drain(ZMarkStripe* stripe, ZMarkThreadLocalStacks* stacks, ZMarkContext* context, T* timeout) {
   ZMarkStackEntry entry;
 
   // Drain stripe stacks
   while (stacks->pop(&_allocator, &_stripes, stripe, entry)) {
-    mark_and_follow(cache, entry);
+    mark_and_follow(context, entry);
 
     // Check timeout
     if (timeout->has_expired()) {
@@ -350,8 +354,8 @@ bool ZMark::drain(ZMarkStripe* stripe, ZMarkThreadLocalStacks* stacks, ZMarkCach
 }
 
 template <typename T>
-bool ZMark::drain_and_flush(ZMarkStripe* stripe, ZMarkThreadLocalStacks* stacks, ZMarkCache* cache, T* timeout) {
-  const bool success = drain(stripe, stacks, cache, timeout);
+bool ZMark::drain_and_flush(ZMarkStripe* stripe, ZMarkThreadLocalStacks* stacks, ZMarkContext* context, T* timeout) {
+  const bool success = drain(stripe, stacks, context, timeout);
 
   // Flush and publish worker stacks
   stacks->flush(&_allocator, &_stripes);
@@ -490,12 +494,12 @@ public:
   }
 };
 
-void ZMark::work_without_timeout(ZMarkCache* cache, ZMarkStripe* stripe, ZMarkThreadLocalStacks* stacks) {
+void ZMark::work_without_timeout(ZMarkContext* context, ZMarkStripe* stripe, ZMarkThreadLocalStacks* stacks) {
   ZStatTimer timer(ZSubPhaseConcurrentMark);
   ZMarkNoTimeout no_timeout;
 
   for (;;) {
-    drain_and_flush(stripe, stacks, cache, &no_timeout);
+    drain_and_flush(stripe, stacks, context, &no_timeout);
 
     if (try_steal(stripe, stacks)) {
       // Stole work
@@ -552,12 +556,12 @@ public:
   }
 };
 
-void ZMark::work_with_timeout(ZMarkCache* cache, ZMarkStripe* stripe, ZMarkThreadLocalStacks* stacks, uint64_t timeout_in_micros) {
+void ZMark::work_with_timeout(ZMarkContext* context, ZMarkStripe* stripe, ZMarkThreadLocalStacks* stacks, uint64_t timeout_in_micros) {
   ZStatTimer timer(ZSubPhaseMarkTryComplete);
   ZMarkTimeout timeout(timeout_in_micros);
 
   for (;;) {
-    if (!drain_and_flush(stripe, stacks, cache, &timeout)) {
+    if (!drain_and_flush(stripe, stacks, context, &timeout)) {
       // Timed out
       break;
     }
@@ -573,14 +577,14 @@ void ZMark::work_with_timeout(ZMarkCache* cache, ZMarkStripe* stripe, ZMarkThrea
 }
 
 void ZMark::work(uint64_t timeout_in_micros) {
-  ZMarkCache cache(_stripes.nstripes());
+  ZMarkContext context(_stripes.nstripes());
   ZMarkStripe* const stripe = _stripes.stripe_for_worker(_nworkers, ZThread::worker_id());
   ZMarkThreadLocalStacks* const stacks = ZThreadLocalData::stacks(Thread::current());
 
   if (timeout_in_micros == 0) {
-    work_without_timeout(&cache, stripe, stacks);
+    work_without_timeout(&context, stripe, stacks);
   } else {
-    work_with_timeout(&cache, stripe, stacks, timeout_in_micros);
+    work_with_timeout(&context, stripe, stacks, timeout_in_micros);
   }
 
   // Make sure stacks have been flushed
