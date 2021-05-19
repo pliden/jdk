@@ -147,7 +147,7 @@ public:
 
 static bool should_clear_soft_references() {
   // Clear if one or more allocations have stalled
-  const bool stalled = ZHeap::heap()->is_alloc_stalled();
+  const bool stalled = ZHeap::heap()->has_alloc_stalled();
   if (stalled) {
     // Clear
     return true;
@@ -172,7 +172,7 @@ static uint select_active_worker_threads(const ZDriverRequest& gc_request) {
   }
 
   // Use all worker threads if one or more allocations have stalled
-  const bool stalled = ZHeap::heap()->is_alloc_stalled();
+  const bool stalled = ZHeap::heap()->has_alloc_stalled();
   if (stalled) {
     return ConcGCThreads;
   }

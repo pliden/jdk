@@ -60,6 +60,7 @@ private:
   size_t                     _used_low;
   ssize_t                    _reclaimed;
   ZList<ZPageAllocation>     _stalled;
+  volatile size_t            _nstalled;
   ZList<ZPageAllocation>     _satisfied;
   ZUnmapper*                 _unmapper;
   ZUncommitter*              _uncommitter;
@@ -127,7 +128,7 @@ public:
   void debug_map_page(const ZPage* page) const;
   void debug_unmap_page(const ZPage* page) const;
 
-  bool is_alloc_stalled() const;
+  bool has_alloc_stalled() const;
   void check_out_of_memory();
 
   void pages_do(ZPageClosure* cl) const;

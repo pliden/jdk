@@ -145,6 +145,7 @@ ZPageAllocator::ZPageAllocator(ZWorkers* workers,
     _used_low(0),
     _reclaimed(0),
     _stalled(),
+    _nstalled(0),
     _satisfied(),
     _unmapper(new ZUnmapper(this)),
     _uncommitter(new ZUncommitter(this)),
@@ -283,6 +284,7 @@ void ZPageAllocator::reset_statistics() {
   assert(SafepointSynchronize::is_at_safepoint(), "Should be at safepoint");
   _reclaimed = 0;
   _used_high = _used_low = _used;
+  _nstalled = 0;
 }
 
 size_t ZPageAllocator::increase_capacity(size_t size) {
@@ -447,6 +449,9 @@ bool ZPageAllocator::alloc_page_stall(ZPageAllocation* allocation) {
 
   // We can only block if the VM is fully initialized
   check_out_of_memory_during_initialization();
+
+  // Increment stalled counter
+  Atomic::inc(&_nstalled);
 
   do {
     // Start asynchronous GC
@@ -804,9 +809,8 @@ void ZPageAllocator::pages_do(ZPageClosure* cl) const {
   _cache.pages_do(cl);
 }
 
-bool ZPageAllocator::is_alloc_stalled() const {
-  assert(SafepointSynchronize::is_at_safepoint(), "Should be at safepoint");
-  return !_stalled.is_empty();
+bool ZPageAllocator::has_alloc_stalled() const {
+  return Atomic::load(&_nstalled) != 0;
 }
 
 void ZPageAllocator::check_out_of_memory() {
