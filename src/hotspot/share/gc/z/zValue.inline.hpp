@@ -105,7 +105,7 @@ inline size_t ZPerWorkerStorage::alignment() {
 }
 
 inline uint32_t ZPerWorkerStorage::count() {
-  return MAX2(ParallelGCThreads, ConcGCThreads);
+  return ConcGCThreads;
 }
 
 inline uint32_t ZPerWorkerStorage::id() {

@@ -39,15 +39,13 @@ private:
 public:
   ZWorkers();
 
-  uint nparallel() const;
-  uint nparallel_no_boost() const;
   uint nconcurrent() const;
   uint nconcurrent_no_boost() const;
   uint nworkers() const;
 
   void set_boost(bool boost);
 
-  void run_parallel(ZTask* task);
+  void run_all(ZTask* task);
   void run_concurrent(ZTask* task);
 
   void threads_do(ThreadClosure* tc) const;

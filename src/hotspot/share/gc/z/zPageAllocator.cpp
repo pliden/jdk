@@ -225,7 +225,7 @@ bool ZPageAllocator::prime_cache(ZWorkers* workers, size_t size) {
   if (AlwaysPreTouch) {
     // Pre-touch page
     ZPreTouchTask task(&_physical, page->start(), page->end());
-    workers->run_parallel(&task);
+    workers->run_all(&task);
   }
 
   free_page(page, false /* reclaimed */);

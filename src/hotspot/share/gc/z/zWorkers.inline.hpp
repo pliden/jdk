@@ -28,14 +28,6 @@
 #include "gc/z/zWorkers.hpp"
 #include "utilities/globalDefinitions.hpp"
 
-inline uint ZWorkers::nparallel() const {
-  return _boost ? nworkers() : nparallel_no_boost();
-}
-
-inline uint ZWorkers::nparallel_no_boost() const {
-  return ParallelGCThreads;
-}
-
 inline uint ZWorkers::nconcurrent() const {
   return _boost ? nworkers() : nconcurrent_no_boost();
 }
@@ -45,7 +37,7 @@ inline uint ZWorkers::nconcurrent_no_boost() const {
 }
 
 inline uint ZWorkers::nworkers() const {
-  return MAX2(ParallelGCThreads, ConcGCThreads);
+  return ConcGCThreads;
 }
 
 #endif // SHARE_GC_Z_ZWORKERS_INLINE_HPP

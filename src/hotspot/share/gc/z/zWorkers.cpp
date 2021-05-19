@@ -66,7 +66,7 @@ ZWorkers::ZWorkers() :
              true /* are_GC_task_threads */,
              true /* are_ConcurrentGC_threads */) {
 
-  log_info_p(gc, init)("Workers: %u parallel, %u concurrent", nparallel(), nconcurrent());
+  log_info_p(gc, init)("Workers: %u concurrent", nconcurrent());
 
   // Initialize worker threads
   _workers.initialize_workers();
@@ -94,8 +94,8 @@ void ZWorkers::run(ZTask* task, uint nworkers) {
   _workers.run_task(task->gang_task());
 }
 
-void ZWorkers::run_parallel(ZTask* task) {
-  run(task, nparallel());
+void ZWorkers::run_all(ZTask* task) {
+  run(task, nworkers());
 }
 
 void ZWorkers::run_concurrent(ZTask* task) {
