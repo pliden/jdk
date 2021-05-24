@@ -44,8 +44,8 @@ private:
   ZBarrierSet       _barrier_set;
   ZInitialize       _initialize;
   ZHeap             _heap;
-  ZDirector*        _director;
   ZDriver*          _driver;
+  ZDirector*        _director;
   ZStat*            _stat;
   ZRuntimeWorkers   _runtime_workers;
 

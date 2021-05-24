@@ -23,23 +23,23 @@
 
 #include "precompiled.hpp"
 #include "gc/shared/gc_globals.hpp"
-#include "gc/z/zCollectedHeap.hpp"
 #include "gc/z/zDirector.hpp"
+#include "gc/z/zDriver.hpp"
 #include "gc/z/zHeap.inline.hpp"
 #include "gc/z/zHeuristics.hpp"
 #include "gc/z/zStat.hpp"
 #include "logging/log.hpp"
 
-const double ZDirector::one_in_1000 = 3.290527;
+constexpr double one_in_1000 = 3.290527;
 
-ZDirector::ZDirector() :
-    _relocation_headroom(ZHeuristics::relocation_headroom()),
+ZDirector::ZDirector(ZDriver* driver) :
+    _driver(driver),
     _metronome(ZStatAllocRate::sample_hz) {
   set_name("ZDirector");
   create_and_start();
 }
 
-void ZDirector::sample_allocation_rate() const {
+static void sample_allocation_rate() {
   // Sample allocation rate. This is needed by rule_allocation_rate()
   // below to estimate the time we have until we run out of memory.
   const double bytes_per_second = ZStatAllocRate::sample_and_reset();
@@ -50,10 +50,10 @@ void ZDirector::sample_allocation_rate() const {
                        ZStatAllocRate::avg_sd() / M);
 }
 
-bool ZDirector::rule_timer() const {
+static ZDriverMessage rule_timer() {
   if (ZCollectionInterval <= 0) {
     // Rule disabled
-    return false;
+    return ZDriverMessage();
   }
 
   // Perform GC if timer has expired.
@@ -63,13 +63,17 @@ bool ZDirector::rule_timer() const {
   log_debug(gc, director)("Rule: Timer, Interval: %.3fs, TimeUntilGC: %.3fs",
                           ZCollectionInterval, time_until_gc);
 
-  return time_until_gc <= 0;
+  if (time_until_gc > 0) {
+    return ZDriverMessage();
+  }
+
+  return ZDriverMessage(GCCause::_z_timer);
 }
 
-bool ZDirector::rule_warmup() const {
+static ZDriverMessage rule_warmup() {
   if (ZStatCycle::is_warm()) {
     // Rule disabled
-    return false;
+    return ZDriverMessage();
   }
 
   // Perform GC if heap usage passes 10/20/30% and no other GC has been
@@ -83,13 +87,17 @@ bool ZDirector::rule_warmup() const {
   log_debug(gc, director)("Rule: Warmup %.0f%%, Used: " SIZE_FORMAT "MB, UsedThreshold: " SIZE_FORMAT "MB",
                           used_threshold_percent * 100, used / M, used_threshold / M);
 
-  return used >= used_threshold;
+  if (used < used_threshold) {
+    return ZDriverMessage();
+  }
+
+  return ZDriverMessage(GCCause::_z_warmup);
 }
 
-bool ZDirector::rule_allocation_rate() const {
+static ZDriverMessage rule_allocation_rate() {
   if (!ZStatCycle::is_normalized_duration_trustable()) {
     // Rule disabled
-    return false;
+    return ZDriverMessage();
   }
 
   // Perform GC if the estimated max allocation rate indicates that we
@@ -103,7 +111,7 @@ bool ZDirector::rule_allocation_rate() const {
   const size_t soft_max_capacity = ZHeap::heap()->soft_max_capacity();
   const size_t used = ZHeap::heap()->used();
   const size_t free_including_headroom = soft_max_capacity - MIN2(soft_max_capacity, used);
-  const size_t free = free_including_headroom - MIN2(free_including_headroom, _relocation_headroom);
+  const size_t free = free_including_headroom - MIN2(free_including_headroom, ZHeuristics::relocation_headroom());
 
   // Calculate time until OOM given the max allocation rate and the amount
   // of free memory. The allocation rate is a moving average and we multiply
@@ -128,13 +136,17 @@ bool ZDirector::rule_allocation_rate() const {
   log_debug(gc, director)("Rule: Allocation Rate, MaxAllocRate: %.3fMB/s, Free: " SIZE_FORMAT "MB, MaxDurationOfGC: %.3fs, TimeUntilGC: %.3fs",
                           max_alloc_rate / M, free / M, max_duration_of_gc, time_until_gc);
 
-  return time_until_gc <= 0;
+  if (time_until_gc > 0) {
+    return ZDriverMessage();
+  }
+
+  return ZDriverMessage(GCCause::_z_proactive);
 }
 
-bool ZDirector::rule_proactive() const {
+static ZDriverMessage rule_proactive() {
   if (!ZProactive || !ZStatCycle::is_warm()) {
     // Rule disabled
-    return false;
+    return ZDriverMessage();
   }
 
   // Perform GC if the impact of doing so, in terms of application throughput
@@ -157,7 +169,7 @@ bool ZDirector::rule_proactive() const {
     log_debug(gc, director)("Rule: Proactive, UsedUntilEnabled: " SIZE_FORMAT "MB, TimeUntilEnabled: %.3fs",
                             (used_threshold - used) / M,
                             time_since_last_gc_threshold - time_since_last_gc);
-    return false;
+    return ZDriverMessage();
   }
 
   const double assumed_throughput_drop_during_gc = 0.50; // 50%
@@ -170,10 +182,14 @@ bool ZDirector::rule_proactive() const {
   log_debug(gc, director)("Rule: Proactive, AcceptableGCInterval: %.3fs, TimeSinceLastGC: %.3fs, TimeUntilGC: %.3fs",
                           acceptable_gc_interval, time_since_last_gc, time_until_gc);
 
-  return time_until_gc <= 0;
+  if (time_until_gc > 0) {
+    return ZDriverMessage();
+  }
+
+  return ZDriverMessage(GCCause::_z_proactive);
 }
 
-bool ZDirector::rule_high_usage() const {
+static ZDriverMessage rule_high_usage() {
   // Perform GC if the amount of free memory is 5% or less. This is a preventive
   // meassure in the case where the application has a very low allocation rate,
   // such that the allocation rate rule doesn't trigger, but the amount of free
@@ -185,52 +201,50 @@ bool ZDirector::rule_high_usage() const {
   const size_t soft_max_capacity = ZHeap::heap()->soft_max_capacity();
   const size_t used = ZHeap::heap()->used();
   const size_t free_including_headroom = soft_max_capacity - MIN2(soft_max_capacity, used);
-  const size_t free = free_including_headroom - MIN2(free_including_headroom, _relocation_headroom);
+  const size_t free = free_including_headroom - MIN2(free_including_headroom, ZHeuristics::relocation_headroom());
   const double free_percent = percent_of(free, soft_max_capacity);
 
   log_debug(gc, director)("Rule: High Usage, Free: " SIZE_FORMAT "MB(%.1f%%)",
                           free / M, free_percent);
 
-  return free_percent <= 5.0;
+  if (free_percent > 5.0) {
+    return ZDriverMessage();
+  }
+
+  return ZDriverMessage(GCCause::_z_high_usage);
 }
 
-GCCause::Cause ZDirector::make_gc_decision() const {
-  // Rule 0: Timer
-  if (rule_timer()) {
-    return GCCause::_z_timer;
+using ZDirectorRule = ZDriverMessage (*)();
+
+static ZDriverMessage make_gc_decision() {
+  // List of rules
+  const ZDirectorRule rules[] = {
+    rule_timer,
+    rule_warmup,
+    rule_allocation_rate,
+    rule_high_usage,
+    rule_proactive,
+  };
+
+  // Execute rules
+  for (size_t i = 0; i < ARRAY_SIZE(rules); i++) {
+    const ZDriverMessage message = rules[i]();
+    if (!message.is_empty()) {
+      return message;
+    }
   }
 
-  // Rule 1: Warmup
-  if (rule_warmup()) {
-    return GCCause::_z_warmup;
-  }
-
-  // Rule 2: Allocation rate
-  if (rule_allocation_rate()) {
-    return GCCause::_z_allocation_rate;
-  }
-
-  // Rule 3: Proactive
-  if (rule_proactive()) {
-    return GCCause::_z_proactive;
-  }
-
-  // Rule 4: High usage
-  if (rule_high_usage()) {
-    return GCCause::_z_high_usage;
-  }
-
-  // No GC
-  return GCCause::_no_gc;
+  // Return empty message
+  return ZDriverMessage();
 }
 
 void ZDirector::run_service() {
   // Main loop
   while (_metronome.wait_for_tick()) {
     sample_allocation_rate();
-    const GCCause::Cause cause = make_gc_decision();
-    if (cause != GCCause::_no_gc) {
-      ZCollectedHeap::heap()->collect(cause);
+    const ZDriverMessage message = make_gc_decision();
+    if (!message.is_empty()) {
+      _driver->collect(message);
     }
   }
 }

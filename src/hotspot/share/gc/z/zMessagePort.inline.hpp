@@ -74,7 +74,7 @@ inline ZMessagePort<T>::ZMessagePort() :
     _queue() {}
 
 template <typename T>
-inline void ZMessagePort<T>::send_sync(T message) {
+inline void ZMessagePort<T>::send_sync(const T& message) {
   Request request;
 
   {
@@ -101,7 +101,7 @@ inline void ZMessagePort<T>::send_sync(T message) {
 }
 
 template <typename T>
-inline void ZMessagePort<T>::send_async(T message) {
+inline void ZMessagePort<T>::send_async(const T& message) {
   MonitorLocker ml(&_monitor, Monitor::_no_safepoint_check_flag);
   if (!_has_message) {
     // Post message

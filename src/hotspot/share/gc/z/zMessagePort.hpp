@@ -44,8 +44,8 @@ private:
 public:
   ZMessagePort();
 
-  void send_sync(T message);
-  void send_async(T message);
+  void send_sync(const T& message);
+  void send_async(const T& message);
 
   T receive();
   void ack();

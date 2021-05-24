@@ -53,14 +53,43 @@ static const ZStatPhaseConcurrent ZPhaseConcurrentRelocated("Concurrent Relocate
 static const ZStatCriticalPhase   ZCriticalPhaseGCLockerStall("GC Locker Stall", false /* verbose */);
 static const ZStatSampler         ZSamplerJavaThreads("System", "Java Threads", ZStatUnitThreads);
 
+ZDriverMessage::ZDriverMessage() :
+    ZDriverMessage(GCCause::_no_gc) {}
+
+ZDriverMessage::ZDriverMessage(GCCause::Cause cause) :
+    ZDriverMessage(cause, 0 /* nworkers */) {}
+
+ZDriverMessage::ZDriverMessage(GCCause::Cause cause, uint nworkers) :
+    _cause(cause),
+    _nworkers(nworkers) {}
+
+bool ZDriverMessage::operator==(const ZDriverMessage& other) const {
+  return _cause == other._cause;
+}
+
+bool ZDriverMessage::is_empty() const {
+  ZDriverMessage empty;
+  return *this == empty;
+}
+
+GCCause::Cause ZDriverMessage::cause() const {
+  return _cause;
+}
+
+uint ZDriverMessage::nworkers() const {
+  return _nworkers;
+}
+
 class VM_ZOperation : public VM_Operation {
 private:
-  const uint _gc_id;
-  bool       _gc_locked;
-  bool       _success;
+  const ZDriverMessage _gc_message;
+  const uint           _gc_id;
+  bool                 _gc_locked;
+  bool                 _success;
 
 public:
-  VM_ZOperation() :
+  VM_ZOperation(const ZDriverMessage& gc_message) :
+      _gc_message(gc_message),
       _gc_id(GCId::current()),
       _gc_locked(false),
       _success(false) {}
@@ -108,6 +137,10 @@ public:
     Heap_lock->unlock();
   }
 
+  const ZDriverMessage& gc_message() const {
+    return _gc_message;
+  }
+
   bool gc_locked() const {
     return _gc_locked;
   }
@@ -137,29 +170,27 @@ static bool should_clear_soft_references() {
   return false;
 }
 
-static bool should_boost_worker_threads() {
-  // Boost worker threads if one or more allocations have stalled
+static uint select_active_worker_threads(const ZDriverMessage& gc_message) {
+  // Use all worker thread if unspecified by message
+  if (gc_message.nworkers() == 0) {
+    return ConcGCThreads;
+  }
+
+  // Use all worker threads if one or more allocations have stalled
   const bool stalled = ZHeap::heap()->is_alloc_stalled();
   if (stalled) {
-    // Boost
-    return true;
+    return ConcGCThreads;
   }
 
-  // Boost worker threads if implied by the GC cause
-  const GCCause::Cause cause = ZCollectedHeap::heap()->gc_cause();
-  if (cause == GCCause::_wb_full_gc ||
-      cause == GCCause::_java_lang_system_gc ||
-      cause == GCCause::_metadata_GC_clear_soft_refs) {
-    // Boost
-    return true;
-  }
-
-  // Don't boost
-  return false;
+  // Use requested number of worker threads
+  return gc_message.nworkers();
 }
 
 class VM_ZMarkStart : public VM_ZOperation {
 public:
+  VM_ZMarkStart(const ZDriverMessage& gc_message) :
+      VM_ZOperation(gc_message) {}
+
   virtual VMOp_Type type() const {
     return VMOp_ZMarkStart;
   }
@@ -176,9 +207,9 @@ public:
     const bool clear = should_clear_soft_references();
     ZHeap::heap()->set_soft_reference_policy(clear);
 
-    // Set up boost mode
-    const bool boost = should_boost_worker_threads();
-    ZHeap::heap()->set_boost_worker_threads(boost);
+    // Select number of worker threads
+    const uint nworkers = select_active_worker_threads(gc_message());
+//    ZHeap::heap()->set_active_worker_threads(nworkers);
 
     ZCollectedHeap::heap()->increment_total_collections(true /* full */);
 
@@ -189,6 +220,9 @@ public:
 
 class VM_ZMarkEnd : public VM_ZOperation {
 public:
+  VM_ZMarkEnd(const ZDriverMessage& gc_message) :
+      VM_ZOperation(gc_message) {}
+
   virtual VMOp_Type type() const {
     return VMOp_ZMarkEnd;
   }
@@ -202,6 +236,9 @@ public:
 
 class VM_ZRelocateStart : public VM_ZOperation {
 public:
+  VM_ZRelocateStart(const ZDriverMessage& gc_message) :
+      VM_ZOperation(gc_message) {}
+
   virtual VMOp_Type type() const {
     return VMOp_ZRelocateStart;
   }
@@ -240,8 +277,8 @@ ZDriver::ZDriver() :
   create_and_start();
 }
 
-void ZDriver::collect(GCCause::Cause cause) {
-  switch (cause) {
+void ZDriver::collect(const ZDriverMessage& message) {
+  switch (message.cause()) {
   case GCCause::_wb_young_gc:
   case GCCause::_wb_conc_mark:
   case GCCause::_wb_full_gc:
@@ -252,7 +289,7 @@ void ZDriver::collect(GCCause::Cause cause) {
   case GCCause::_jvmti_force_gc:
   case GCCause::_metadata_GC_clear_soft_refs:
     // Start synchronous GC
-    _gc_cycle_port.send_sync(cause);
+    _gc_cycle_port.send_sync(message);
     break;
 
   case GCCause::_z_timer:
@@ -263,7 +300,7 @@ void ZDriver::collect(GCCause::Cause cause) {
   case GCCause::_z_high_usage:
   case GCCause::_metadata_GC_threshold:
     // Start asynchronous GC
-    _gc_cycle_port.send_async(cause);
+    _gc_cycle_port.send_async(message);
     break;
 
   case GCCause::_gc_locker:
@@ -273,12 +310,12 @@ void ZDriver::collect(GCCause::Cause cause) {
 
   case GCCause::_wb_breakpoint:
     ZBreakpoint::start_gc();
-    _gc_cycle_port.send_async(cause);
+    _gc_cycle_port.send_async(message);
     break;
 
   default:
     // Other causes not supported
-    fatal("Unsupported GC cause (%s)", GCCause::to_string(cause));
+    fatal("Unsupported GC cause (%s)", GCCause::to_string(message.cause()));
     break;
   }
 }
@@ -286,7 +323,7 @@ void ZDriver::collect(GCCause::Cause cause) {
 template <typename T>
 bool ZDriver::pause() {
   for (;;) {
-    T op;
+    T op(_gc_message);
     VMThread::execute(&op);
     if (op.gc_locked()) {
       // Wait for GC to become unlocked and restart the VM operation
@@ -372,10 +409,10 @@ private:
   ZServiceabilityCycleTracer _tracer;
 
 public:
-  ZDriverGCScope(GCCause::Cause cause) :
+  ZDriverGCScope(const ZDriverMessage& gc_message) :
       _gc_id(),
-      _gc_cause(cause),
-      _gc_cause_setter(ZCollectedHeap::heap(), cause),
+      _gc_cause(gc_message.cause()),
+      _gc_cause_setter(ZCollectedHeap::heap(), _gc_cause),
       _timer(ZPhaseCycle),
       _tracer() {
     // Update statistics
@@ -411,8 +448,8 @@ public:
     }                                 \
   } while (false)
 
-void ZDriver::gc(GCCause::Cause cause) {
-  ZDriverGCScope scope(cause);
+void ZDriver::gc() {
+  ZDriverGCScope scope(_gc_message);
 
   // Phase 1: Pause Mark Start
   pause_mark_start();
@@ -449,15 +486,15 @@ void ZDriver::run_service() {
   // Main loop
   while (!should_terminate()) {
     // Wait for GC request
-    const GCCause::Cause cause = _gc_cycle_port.receive();
-    if (cause == GCCause::_no_gc) {
+    _gc_message = _gc_cycle_port.receive();
+    if (_gc_message.is_empty()) {
       continue;
     }
 
     ZBreakpoint::at_before_gc();
 
     // Run GC
-    gc(cause);
+    gc();
 
     // Notify GC completed
     _gc_cycle_port.ack();
@@ -471,5 +508,5 @@ void ZDriver::run_service() {
 
 void ZDriver::stop_service() {
   ZAbort::abort();
-  _gc_cycle_port.send_async(GCCause::_no_gc);
+  _gc_cycle_port.send_async(ZDriverMessage());
 }
