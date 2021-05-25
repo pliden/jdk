@@ -1059,6 +1059,7 @@ Ticks     ZStatCycle::_start_of_last;
 Ticks     ZStatCycle::_end_of_last;
 NumberSeq ZStatCycle::_normalized_duration(0.7 /* alpha */);
 
+uint      ZStatCycle::_last_active_workers = 0;
 NumberSeq ZStatCycle::_serial_cputime(0.7 /* alpha */);
 NumberSeq ZStatCycle::_parallel_cputime(0.7 /* alpha */);
 
@@ -1066,12 +1067,14 @@ void ZStatCycle::at_start() {
   _start_of_last = Ticks::now();
 }
 
-void ZStatCycle::at_end(GCCause::Cause cause, double boost_factor) {
+void ZStatCycle::at_end(GCCause::Cause cause, uint active_workers, double boost_factor) {
   _end_of_last = Ticks::now();
 
   if (cause == GCCause::_z_warmup) {
     _nwarmup_cycles++;
   }
+
+  _last_active_workers = active_workers;
 
   // Calculate normalized cycle duration. The measured duration is
   // normalized using the boost factor to avoid artificial deflation
@@ -1081,12 +1084,18 @@ void ZStatCycle::at_end(GCCause::Cause cause, double boost_factor) {
   _normalized_duration.add(normalized_duration);
 
   // Calculate cputime used by serial and parallel phases
-  const uint nworkers = 10; //FIXME
   const double workers_duration = ZStatWorkers::get_and_reset_duration();
   const double serial_cputime = duration - workers_duration;
-  const double parallel_cputime = workers_duration * nworkers;
+  const double parallel_cputime = workers_duration * active_workers;
   _serial_cputime.add(serial_cputime);
   _parallel_cputime.add(parallel_cputime);
+
+  log_info(gc)("DURATION: %0.3f, %0.3f + %0.3f / %u = %0.3f",
+               duration,
+               serial_cputime,
+               parallel_cputime,
+               active_workers,
+               serial_cputime + parallel_cputime / active_workers);
 }
 
 bool ZStatCycle::is_warm() {
@@ -1095,6 +1104,10 @@ bool ZStatCycle::is_warm() {
 
 uint64_t ZStatCycle::nwarmup_cycles() {
   return _nwarmup_cycles;
+}
+
+uint ZStatCycle::last_active_workers() {
+  return _last_active_workers;
 }
 
 bool ZStatCycle::is_normalized_duration_trustable() {

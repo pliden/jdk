@@ -205,6 +205,7 @@ public:
     // Select number of worker threads to use
     const uint nworkers = select_active_worker_threads(gc_request());
     ZHeap::heap()->set_active_workers(nworkers);
+    log_info(gc)("Using %u GC workers", nworkers);
 
     ZCollectedHeap::heap()->increment_total_collections(true /* full */);
 
@@ -424,7 +425,7 @@ public:
                                 (double)ZHeap::heap()->total_workers();
 
     // Update statistics
-    ZStatCycle::at_end(_gc_cause, boost_factor);
+    ZStatCycle::at_end(_gc_cause, ZHeap::heap()->active_workers(), boost_factor);
 
     // Update data used by soft reference policy
     Universe::heap()->update_capacity_and_used_at_gc();

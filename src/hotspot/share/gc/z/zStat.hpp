@@ -376,15 +376,18 @@ private:
   static Ticks     _end_of_last;
   static NumberSeq _normalized_duration;
 
+  static uint      _last_active_workers;
   static NumberSeq _serial_cputime;
   static NumberSeq _parallel_cputime;
 
 public:
   static void at_start();
-  static void at_end(GCCause::Cause cause, double boost_factor);
+  static void at_end(GCCause::Cause cause, uint active_workers, double boost_factor);
 
   static bool is_warm();
   static uint64_t nwarmup_cycles();
+
+  static uint last_active_workers();
 
   static bool is_normalized_duration_trustable();
   static const AbsSeq& normalized_duration();
