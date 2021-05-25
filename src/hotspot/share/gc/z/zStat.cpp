@@ -1059,6 +1059,9 @@ Ticks     ZStatCycle::_start_of_last;
 Ticks     ZStatCycle::_end_of_last;
 NumberSeq ZStatCycle::_normalized_duration(0.7 /* alpha */);
 
+NumberSeq ZStatCycle::_serial_cputime(0.7 /* alpha */);
+NumberSeq ZStatCycle::_parallel_cputime(0.7 /* alpha */);
+
 void ZStatCycle::at_start() {
   _start_of_last = Ticks::now();
 }
@@ -1076,6 +1079,14 @@ void ZStatCycle::at_end(GCCause::Cause cause, double boost_factor) {
   const double duration = (_end_of_last - _start_of_last).seconds();
   const double normalized_duration = duration * boost_factor;
   _normalized_duration.add(normalized_duration);
+
+  // Calculate cputime used by serial and parallel phases
+  const uint nworkers = 10; //FIXME
+  const double workers_duration = ZStatWorkers::get_and_reset_duration();
+  const double serial_cputime = duration - workers_duration;
+  const double parallel_cputime = workers_duration * nworkers;
+  _serial_cputime.add(serial_cputime);
+  _parallel_cputime.add(parallel_cputime);
 }
 
 bool ZStatCycle::is_warm() {
@@ -1096,6 +1107,20 @@ const AbsSeq& ZStatCycle::normalized_duration() {
   return _normalized_duration;
 }
 
+bool ZStatCycle::is_cputime_trustable() {
+  // The cputimes are considered trustable if we
+  // have completed at least one warmup cycle.
+  return _nwarmup_cycles > 0;
+}
+
+const AbsSeq& ZStatCycle::serial_cputime() {
+  return _serial_cputime;
+}
+
+const AbsSeq& ZStatCycle::parallel_cputime() {
+  return _parallel_cputime;
+}
+
 double ZStatCycle::time_since_last() {
   if (_end_of_last.value() == 0) {
     // No end recorded yet, return time since VM start
@@ -1105,6 +1130,29 @@ double ZStatCycle::time_since_last() {
   const Ticks now = Ticks::now();
   const Tickspan time_since_last = now - _end_of_last;
   return time_since_last.seconds();
+}
+
+//
+// Stat workers
+//
+Ticks ZStatWorkers::_start_of_last;
+Tickspan ZStatWorkers::_accumulated_duration;
+
+void ZStatWorkers::at_start() {
+  _start_of_last = Ticks::now();
+}
+
+void ZStatWorkers::at_end() {
+  const Ticks now = Ticks::now();
+  const Tickspan duration = now - _start_of_last;
+  _accumulated_duration += duration;
+}
+
+double ZStatWorkers::get_and_reset_duration() {
+  const double duration = _accumulated_duration.seconds();
+  const Ticks now = Ticks::now();
+  _accumulated_duration = now - now;
+  return duration;
 }
 
 //

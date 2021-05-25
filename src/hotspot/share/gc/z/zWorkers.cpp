@@ -24,6 +24,7 @@
 #include "precompiled.hpp"
 #include "gc/shared/gcLogPrecious.hpp"
 #include "gc/z/zLock.inline.hpp"
+#include "gc/z/zStat.hpp"
 #include "gc/z/zTask.hpp"
 #include "gc/z/zThread.hpp"
 #include "gc/z/zWorkers.inline.hpp"
@@ -81,7 +82,9 @@ ZWorkers::ZWorkers() :
 
 void ZWorkers::run(ZTask* task) {
   log_debug(gc, task)("Executing Task: %s, Active Workers: %u", task->name(), active_workers());
+  ZStatWorkers::at_start();
   _workers.run_task(task->gang_task());
+  ZStatWorkers::at_end();
 }
 
 void ZWorkers::run_all(ZTask* task) {

@@ -376,6 +376,9 @@ private:
   static Ticks     _end_of_last;
   static NumberSeq _normalized_duration;
 
+  static NumberSeq _serial_cputime;
+  static NumberSeq _parallel_cputime;
+
 public:
   static void at_start();
   static void at_end(GCCause::Cause cause, double boost_factor);
@@ -386,7 +389,26 @@ public:
   static bool is_normalized_duration_trustable();
   static const AbsSeq& normalized_duration();
 
+  static bool is_cputime_trustable();
+  static const AbsSeq& serial_cputime();
+  static const AbsSeq& parallel_cputime();
+
   static double time_since_last();
+};
+
+//
+// Stat workers
+//
+class ZStatWorkers : public AllStatic {
+private:
+  static Ticks    _start_of_last;
+  static Tickspan _accumulated_duration;
+
+public:
+  static void at_start();
+  static void at_end();
+
+  static double get_and_reset_duration();
 };
 
 //
