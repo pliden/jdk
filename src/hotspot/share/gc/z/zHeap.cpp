@@ -100,6 +100,10 @@ size_t ZHeap::used() const {
   return _page_allocator.used();
 }
 
+size_t ZHeap::used_high() const {
+  return _page_allocator.used_high();
+}
+
 size_t ZHeap::unused() const {
   return _page_allocator.unused();
 }

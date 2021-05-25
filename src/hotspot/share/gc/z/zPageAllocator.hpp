@@ -56,7 +56,7 @@ private:
   volatile size_t            _capacity;
   volatile size_t            _claimed;
   volatile size_t            _used;
-  size_t                     _used_high;
+  volatile size_t            _used_high;
   size_t                     _used_low;
   ssize_t                    _reclaimed;
   ZList<ZPageAllocation>     _stalled;
@@ -112,6 +112,7 @@ public:
   size_t soft_max_capacity() const;
   size_t capacity() const;
   size_t used() const;
+  size_t used_high() const;
   size_t unused() const;
 
   ZPageAllocatorStats stats() const;
