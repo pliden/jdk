@@ -56,7 +56,7 @@ void ZArguments::initialize() {
 
   // Select number of parallel threads
   if (FLAG_IS_DEFAULT(ParallelGCThreads)) {
-    FLAG_SET_DEFAULT(ParallelGCThreads, ZHeuristics::nparallel_workers());
+    FLAG_SET_DEFAULT(ParallelGCThreads, ZHeuristics::default_nparallel_workers());
   }
 
   if (ParallelGCThreads == 0) {
@@ -65,7 +65,7 @@ void ZArguments::initialize() {
 
   // Select number of concurrent threads
   if (FLAG_IS_DEFAULT(ConcGCThreads)) {
-    FLAG_SET_DEFAULT(ConcGCThreads, ZHeuristics::nconcurrent_workers());
+    FLAG_SET_DEFAULT(ConcGCThreads, ZHeuristics::default_nconcurrent_workers());
   }
 
   if (ConcGCThreads == 0) {
