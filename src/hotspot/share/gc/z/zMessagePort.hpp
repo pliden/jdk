@@ -35,14 +35,16 @@ class ZMessagePort {
 private:
   typedef ZMessageRequest<T> Request;
 
-  Monitor        _monitor;
-  bool           _has_message;
-  T              _message;
-  uint64_t       _seqnum;
-  ZList<Request> _queue;
+  mutable Monitor _monitor;
+  bool            _has_message;
+  T               _message;
+  uint64_t        _seqnum;
+  ZList<Request>  _queue;
 
 public:
   ZMessagePort();
+
+  bool is_busy() const;
 
   void send_sync(const T& message);
   void send_async(const T& message);

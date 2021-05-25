@@ -240,9 +240,11 @@ void ZDirector::run_service() {
   // Main loop
   while (_metronome.wait_for_tick()) {
     sample_allocation_rate();
-    const ZDriverRequest request = make_gc_decision();
-    if (request.cause() != GCCause::_no_gc) {
-      _driver->collect(request);
+    if (!_driver->is_busy()) {
+      const ZDriverRequest request = make_gc_decision();
+      if (request.cause() != GCCause::_no_gc) {
+        _driver->collect(request);
+      }
     }
   }
 }

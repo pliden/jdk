@@ -272,6 +272,10 @@ ZDriver::ZDriver() :
   create_and_start();
 }
 
+bool ZDriver::is_busy() const {
+  return _gc_cycle_port.is_busy();
+}
+
 void ZDriver::collect(const ZDriverRequest& request) {
   switch (request.cause()) {
   case GCCause::_wb_young_gc:

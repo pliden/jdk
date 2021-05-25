@@ -76,6 +76,8 @@ protected:
 public:
   ZDriver();
 
+  bool is_busy() const;
+
   void collect(const ZDriverRequest& request);
 };
 

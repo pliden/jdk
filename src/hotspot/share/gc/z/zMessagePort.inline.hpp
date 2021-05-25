@@ -74,6 +74,12 @@ inline ZMessagePort<T>::ZMessagePort() :
     _queue() {}
 
 template <typename T>
+inline bool ZMessagePort<T>::is_busy() const {
+  MonitorLocker ml(&_monitor, Monitor::_no_safepoint_check_flag);
+  return _has_message;
+}
+
+template <typename T>
 inline void ZMessagePort<T>::send_sync(const T& message) {
   Request request;
 
