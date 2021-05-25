@@ -331,12 +331,12 @@ void ZStatInc(const ZStatUnsampledCounter& counter, uint64_t increment = 1);
 class ZStatAllocRate : public AllStatic {
 private:
   static const ZStatUnsampledCounter _counter;
+  static TruncatedSeq                _samples;
   static TruncatedSeq                _rate;     // B/s
   static TruncatedSeq                _rate_avg; // B/s
 
 public:
-  static const uint64_t sample_window_sec = 1; // seconds
-  static const uint64_t sample_hz         = 10;
+  static const uint64_t sample_hz = 10;
 
   static const ZStatUnsampledCounter& counter();
   static uint64_t sample_and_reset();
