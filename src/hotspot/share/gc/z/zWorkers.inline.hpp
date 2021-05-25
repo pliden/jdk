@@ -26,18 +26,17 @@
 
 #include "gc/shared/gc_globals.hpp"
 #include "gc/z/zWorkers.hpp"
-#include "utilities/globalDefinitions.hpp"
 
-inline uint ZWorkers::nconcurrent() const {
-  return _boost ? nworkers() : nconcurrent_no_boost();
+inline uint ZWorkers::total_workers() const {
+  return _workers.total_workers();
 }
 
-inline uint ZWorkers::nconcurrent_no_boost() const {
-  return ConcGCThreads;
+inline uint ZWorkers::active_workers() const {
+  return _workers.active_workers();
 }
 
-inline uint ZWorkers::nworkers() const {
-  return ConcGCThreads;
+inline void ZWorkers::set_active_workers(uint nworkers) {
+  _workers.update_active_workers(nworkers);
 }
 
 #endif // SHARE_GC_Z_ZWORKERS_INLINE_HPP

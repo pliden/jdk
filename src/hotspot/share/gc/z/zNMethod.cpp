@@ -376,7 +376,7 @@ void ZNMethod::unlink(ZWorkers* workers, bool unloading_occurred) {
 
     {
       ZNMethodUnlinkTask task(unloading_occurred, &verifier);
-      workers->run_concurrent(&task);
+      workers->run(&task);
       if (task.success()) {
         return;
       }
@@ -421,5 +421,5 @@ public:
 
 void ZNMethod::purge(ZWorkers* workers) {
   ZNMethodPurgeTask task;
-  workers->run_concurrent(&task);
+  workers->run(&task);
 }

@@ -32,8 +32,6 @@ class ZRuntimeWorkers {
 private:
   WorkGang _workers;
 
-  uint nworkers() const;
-
 public:
   ZRuntimeWorkers();
 

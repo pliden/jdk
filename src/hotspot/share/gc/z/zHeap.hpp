@@ -93,9 +93,9 @@ public:
   uint32_t hash_oop(uintptr_t addr) const;
 
   // Threads
-  uint nconcurrent_worker_threads() const;
-  uint nconcurrent_no_boost_worker_threads() const;
-  void set_boost_worker_threads(bool boost);
+  uint total_workers() const;
+  uint active_workers() const;
+  void set_active_workers(uint nworkers);
   void threads_do(ThreadClosure* tc) const;
 
   // Reference processing

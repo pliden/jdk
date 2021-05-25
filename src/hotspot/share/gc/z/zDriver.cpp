@@ -202,9 +202,9 @@ public:
     const bool clear = should_clear_soft_references();
     ZHeap::heap()->set_soft_reference_policy(clear);
 
-    // Select number of worker threads
+    // Select number of worker threads to use
     const uint nworkers = select_active_worker_threads(gc_request());
-//    ZHeap::heap()->set_active_worker_threads(nworkers);
+    ZHeap::heap()->set_active_workers(nworkers);
 
     ZCollectedHeap::heap()->increment_total_collections(true /* full */);
 
@@ -416,8 +416,8 @@ public:
 
   ~ZDriverGCScope() {
     // Calculate boost factor
-    const double boost_factor = (double)ZHeap::heap()->nconcurrent_worker_threads() /
-                                (double)ZHeap::heap()->nconcurrent_no_boost_worker_threads();
+    const double boost_factor = (double)ZHeap::heap()->active_workers() /
+                                (double)ZHeap::heap()->total_workers();
 
     // Update statistics
     ZStatCycle::at_end(_gc_cause, boost_factor);

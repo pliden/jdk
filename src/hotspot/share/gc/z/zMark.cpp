@@ -111,7 +111,7 @@ void ZMark::start() {
   _ncontinue = 0;
 
   // Set number of workers to use
-  _nworkers = _workers->nconcurrent();
+  _nworkers = _workers->active_workers();
 
   // Set number of mark stripes to use, based on number
   // of workers we will use in the concurrent mark phase.
@@ -135,7 +135,7 @@ void ZMark::start() {
 }
 
 void ZMark::prepare_work() {
-  assert(_nworkers == _workers->nconcurrent(), "Invalid number of workers");
+  assert(_nworkers == _workers->active_workers(), "Invalid number of workers");
 
   // Set number of active workers
   _terminate.reset(_nworkers);
@@ -725,11 +725,11 @@ public:
 void ZMark::mark(bool initial) {
   if (initial) {
     ZMarkRootsTask task(this);
-    _workers->run_concurrent(&task);
+    _workers->run(&task);
   }
 
   ZMarkTask task(this);
-  _workers->run_concurrent(&task);
+  _workers->run(&task);
 }
 
 bool ZMark::try_complete() {
@@ -738,7 +738,7 @@ bool ZMark::try_complete() {
   // Use nconcurrent number of worker threads to maintain the
   // worker/stripe distribution used during concurrent mark.
   ZMarkTask task(this, ZMarkCompleteTimeout);
-  _workers->run_concurrent(&task);
+  _workers->run(&task);
 
   // Successful if all stripes are empty
   return _stripes.is_empty();

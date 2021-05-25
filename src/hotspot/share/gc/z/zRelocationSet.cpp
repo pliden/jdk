@@ -115,7 +115,7 @@ ZRelocationSet::ZRelocationSet(ZWorkers* workers) :
 void ZRelocationSet::install(const ZRelocationSetSelector* selector) {
   // Install relocation set
   ZRelocationSetInstallTask task(&_allocator, selector);
-  _workers->run_concurrent(&task);
+  _workers->run(&task);
 
   _forwardings = task.forwardings();
   _nforwardings = task.nforwardings();

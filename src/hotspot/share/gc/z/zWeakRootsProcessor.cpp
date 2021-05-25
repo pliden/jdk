@@ -75,5 +75,5 @@ public:
 
 void ZWeakRootsProcessor::process_weak_roots() {
   ZProcessWeakRootsTask task;
-  _workers->run_concurrent(&task);
+  _workers->run(&task);
 }

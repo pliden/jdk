@@ -29,30 +29,30 @@
 #include "gc/z/zWorkers.inline.hpp"
 #include "runtime/java.hpp"
 
-class ZWorkersInitializeTask : public ZTask {
+class ZWorkersInitializeTask : public AbstractGangTask {
 private:
   const uint     _nworkers;
-  uint           _started;
+  uint           _nstarted;
   ZConditionLock _lock;
 
 public:
   ZWorkersInitializeTask(uint nworkers) :
-      ZTask("ZWorkersInitializeTask"),
+      AbstractGangTask("ZWorkersInitializeTask"),
       _nworkers(nworkers),
-      _started(0),
+      _nstarted(0),
       _lock() {}
 
-  virtual void work() {
+  virtual void work(uint worker_id) {
     // Register as worker
     ZThread::set_worker();
 
     // Wait for all threads to start
     ZLocker<ZConditionLock> locker(&_lock);
-    if (++_started == _nworkers) {
+    if (++_nstarted == _nworkers) {
       // All threads started
       _lock.notify_all();
     } else {
-      while (_started != _nworkers) {
+      while (_nstarted != _nworkers) {
         _lock.wait();
       }
     }
@@ -60,46 +60,40 @@ public:
 };
 
 ZWorkers::ZWorkers() :
-    _boost(false),
     _workers("ZWorker",
-             nworkers(),
+             ConcGCThreads,
              true /* are_GC_task_threads */,
              true /* are_ConcurrentGC_threads */) {
 
-  log_info_p(gc, init)("Workers: %u concurrent", nconcurrent());
+  log_info_p(gc, init)("GC Workers: %u", _workers.total_workers());
 
   // Initialize worker threads
   _workers.initialize_workers();
-  _workers.update_active_workers(nworkers());
-  if (_workers.active_workers() != nworkers()) {
+  _workers.update_active_workers(_workers.total_workers());
+  if (_workers.active_workers() != _workers.total_workers()) {
     vm_exit_during_initialization("Failed to create ZWorkers");
   }
 
   // Execute task to register threads as workers
-  ZWorkersInitializeTask task(nworkers());
-  run(&task, nworkers());
+  ZWorkersInitializeTask task(_workers.total_workers());
+  _workers.run_task(&task);
 }
 
-void ZWorkers::set_boost(bool boost) {
-  if (boost) {
-    log_debug(gc)("Boosting workers");
-  }
-
-  _boost = boost;
-}
-
-void ZWorkers::run(ZTask* task, uint nworkers) {
-  log_debug(gc, task)("Executing Task: %s, Active Workers: %u", task->name(), nworkers);
-  _workers.update_active_workers(nworkers);
+void ZWorkers::run(ZTask* task) {
+  log_debug(gc, task)("Executing Task: %s, Active Workers: %u", task->name(), active_workers());
   _workers.run_task(task->gang_task());
 }
 
 void ZWorkers::run_all(ZTask* task) {
-  run(task, nworkers());
-}
+  // Save number of active workers
+  const uint prev_active_workers = active_workers();
 
-void ZWorkers::run_concurrent(ZTask* task) {
-  run(task, nconcurrent());
+  // Execute task using all workers
+  set_active_workers(_workers.total_workers());
+  run(task);
+
+  // Restore number of active workers
+  set_active_workers(prev_active_workers);
 }
 
 void ZWorkers::threads_do(ThreadClosure* tc) const {

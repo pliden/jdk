@@ -425,7 +425,7 @@ void ZReferenceProcessor::process_references() {
 
   // Process discovered lists
   ZReferenceProcessorTask task(this);
-  _workers->run_concurrent(&task);
+  _workers->run(&task);
 
   // Update SoftReference clock
   soft_reference_update_clock();

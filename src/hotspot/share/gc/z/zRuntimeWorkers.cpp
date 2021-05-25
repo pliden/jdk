@@ -33,24 +33,24 @@
 class ZRuntimeWorkersInitializeTask : public AbstractGangTask {
 private:
   const uint     _nworkers;
-  uint           _started;
+  uint           _nstarted;
   ZConditionLock _lock;
 
 public:
   ZRuntimeWorkersInitializeTask(uint nworkers) :
       AbstractGangTask("ZRuntimeWorkersInitializeTask"),
       _nworkers(nworkers),
-      _started(0),
+      _nstarted(0),
       _lock() {}
 
   virtual void work(uint worker_id) {
     // Wait for all threads to start
     ZLocker<ZConditionLock> locker(&_lock);
-    if (++_started == _nworkers) {
+    if (++_nstarted == _nworkers) {
       // All threads started
       _lock.notify_all();
     } else {
-      while (_started != _nworkers) {
+      while (_nstarted != _nworkers) {
         _lock.wait();
       }
     }
@@ -59,27 +59,23 @@ public:
 
 ZRuntimeWorkers::ZRuntimeWorkers() :
     _workers("RuntimeWorker",
-             nworkers(),
+             ParallelGCThreads,
              false /* are_GC_task_threads */,
              false /* are_ConcurrentGC_threads */) {
 
-  log_info_p(gc, init)("Runtime Workers: %u parallel", nworkers());
+  log_info_p(gc, init)("Runtime Workers: %u", _workers.total_workers());
 
   // Initialize worker threads
   _workers.initialize_workers();
-  _workers.update_active_workers(nworkers());
-  if (_workers.active_workers() != nworkers()) {
+  _workers.update_active_workers(_workers.total_workers());
+  if (_workers.active_workers() != _workers.total_workers()) {
     vm_exit_during_initialization("Failed to create ZRuntimeWorkers");
   }
 
   // Execute task to reduce latency in early safepoints,
   // which otherwise would have to take on any warmup costs.
-  ZRuntimeWorkersInitializeTask task(nworkers());
+  ZRuntimeWorkersInitializeTask task(_workers.total_workers());
   _workers.run_task(&task);
-}
-
-uint ZRuntimeWorkers::nworkers() const {
-  return ParallelGCThreads;
 }
 
 WorkGang* ZRuntimeWorkers::workers() {

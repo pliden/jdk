@@ -31,22 +31,17 @@ class ZTask;
 
 class ZWorkers {
 private:
-  bool     _boost;
   WorkGang _workers;
-
-  void run(ZTask* task, uint nworkers);
 
 public:
   ZWorkers();
 
-  uint nconcurrent() const;
-  uint nconcurrent_no_boost() const;
-  uint nworkers() const;
+  uint total_workers() const;
+  uint active_workers() const;
+  void set_active_workers(uint nworkers);
 
-  void set_boost(bool boost);
-
+  void run(ZTask* task);
   void run_all(ZTask* task);
-  void run_concurrent(ZTask* task);
 
   void threads_do(ThreadClosure* tc) const;
 };

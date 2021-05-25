@@ -148,16 +148,16 @@ bool ZHeap::is_in(uintptr_t addr) const {
   return false;
 }
 
-uint ZHeap::nconcurrent_worker_threads() const {
-  return _workers.nconcurrent();
+uint ZHeap::total_workers() const {
+  return _workers.active_workers();
 }
 
-uint ZHeap::nconcurrent_no_boost_worker_threads() const {
-  return _workers.nconcurrent_no_boost();
+uint ZHeap::active_workers() const {
+  return _workers.active_workers();
 }
 
-void ZHeap::set_boost_worker_threads(bool boost) {
-  _workers.set_boost(boost);
+void ZHeap::set_active_workers(uint nworkers) {
+  _workers.set_active_workers(nworkers);
 }
 
 void ZHeap::threads_do(ThreadClosure* tc) const {
