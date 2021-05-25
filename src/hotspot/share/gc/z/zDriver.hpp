@@ -30,18 +30,17 @@
 
 class VM_ZOperation;
 
-class ZDriverMessage {
+class ZDriverRequest {
 private:
   GCCause::Cause _cause;
   uint           _nworkers;
 
 public:
-  ZDriverMessage();
-  ZDriverMessage(GCCause::Cause cause);
-  ZDriverMessage(GCCause::Cause cause, uint nworkers);
+  ZDriverRequest();
+  ZDriverRequest(GCCause::Cause cause);
+  ZDriverRequest(GCCause::Cause cause, uint nworkers);
 
-  bool operator==(const ZDriverMessage& other) const;
-  bool is_empty() const;
+  bool operator==(const ZDriverRequest& other) const;
 
   GCCause::Cause cause() const;
   uint nworkers() const;
@@ -49,8 +48,8 @@ public:
 
 class ZDriver : public ConcurrentGCThread {
 private:
-  ZDriverMessage               _gc_message;
-  ZMessagePort<ZDriverMessage> _gc_cycle_port;
+  ZDriverRequest               _gc_request;
+  ZMessagePort<ZDriverRequest> _gc_cycle_port;
   ZRendezvousPort              _gc_locker_port;
 
   template <typename T> bool pause();
@@ -77,7 +76,7 @@ protected:
 public:
   ZDriver();
 
-  void collect(const ZDriverMessage& message);
+  void collect(const ZDriverRequest& request);
 };
 
 #endif // SHARE_GC_Z_ZDRIVER_HPP

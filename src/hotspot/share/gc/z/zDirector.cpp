@@ -50,10 +50,10 @@ static void sample_allocation_rate() {
                        ZStatAllocRate::avg_sd() / M);
 }
 
-static ZDriverMessage rule_timer() {
+static ZDriverRequest rule_timer() {
   if (ZCollectionInterval <= 0) {
     // Rule disabled
-    return ZDriverMessage();
+    return GCCause::_no_gc;
   }
 
   // Perform GC if timer has expired.
@@ -64,16 +64,16 @@ static ZDriverMessage rule_timer() {
                           ZCollectionInterval, time_until_gc);
 
   if (time_until_gc > 0) {
-    return ZDriverMessage();
+    return GCCause::_no_gc;
   }
 
-  return ZDriverMessage(GCCause::_z_timer);
+  return GCCause::_z_timer;
 }
 
-static ZDriverMessage rule_warmup() {
+static ZDriverRequest rule_warmup() {
   if (ZStatCycle::is_warm()) {
     // Rule disabled
-    return ZDriverMessage();
+    return GCCause::_no_gc;
   }
 
   // Perform GC if heap usage passes 10/20/30% and no other GC has been
@@ -88,16 +88,16 @@ static ZDriverMessage rule_warmup() {
                           used_threshold_percent * 100, used / M, used_threshold / M);
 
   if (used < used_threshold) {
-    return ZDriverMessage();
+    return GCCause::_no_gc;
   }
 
-  return ZDriverMessage(GCCause::_z_warmup);
+  return GCCause::_z_warmup;
 }
 
-static ZDriverMessage rule_allocation_rate() {
+static ZDriverRequest rule_allocation_rate() {
   if (!ZStatCycle::is_normalized_duration_trustable()) {
     // Rule disabled
-    return ZDriverMessage();
+    return GCCause::_no_gc;
   }
 
   // Perform GC if the estimated max allocation rate indicates that we
@@ -137,16 +137,16 @@ static ZDriverMessage rule_allocation_rate() {
                           max_alloc_rate / M, free / M, max_duration_of_gc, time_until_gc);
 
   if (time_until_gc > 0) {
-    return ZDriverMessage();
+    return GCCause::_no_gc;
   }
 
-  return ZDriverMessage(GCCause::_z_proactive);
+  return GCCause::_z_proactive;
 }
 
-static ZDriverMessage rule_proactive() {
+static ZDriverRequest rule_proactive() {
   if (!ZProactive || !ZStatCycle::is_warm()) {
     // Rule disabled
-    return ZDriverMessage();
+    return GCCause::_no_gc;
   }
 
   // Perform GC if the impact of doing so, in terms of application throughput
@@ -169,7 +169,7 @@ static ZDriverMessage rule_proactive() {
     log_debug(gc, director)("Rule: Proactive, UsedUntilEnabled: " SIZE_FORMAT "MB, TimeUntilEnabled: %.3fs",
                             (used_threshold - used) / M,
                             time_since_last_gc_threshold - time_since_last_gc);
-    return ZDriverMessage();
+    return GCCause::_no_gc;
   }
 
   const double assumed_throughput_drop_during_gc = 0.50; // 50%
@@ -183,13 +183,13 @@ static ZDriverMessage rule_proactive() {
                           acceptable_gc_interval, time_since_last_gc, time_until_gc);
 
   if (time_until_gc > 0) {
-    return ZDriverMessage();
+    return GCCause::_no_gc;
   }
 
-  return ZDriverMessage(GCCause::_z_proactive);
+  return GCCause::_z_proactive;
 }
 
-static ZDriverMessage rule_high_usage() {
+static ZDriverRequest rule_high_usage() {
   // Perform GC if the amount of free memory is 5% or less. This is a preventive
   // meassure in the case where the application has a very low allocation rate,
   // such that the allocation rate rule doesn't trigger, but the amount of free
@@ -208,16 +208,15 @@ static ZDriverMessage rule_high_usage() {
                           free / M, free_percent);
 
   if (free_percent > 5.0) {
-    return ZDriverMessage();
+    return GCCause::_no_gc;
   }
 
-  return ZDriverMessage(GCCause::_z_high_usage);
+  return GCCause::_z_high_usage;
 }
 
-using ZDirectorRule = ZDriverMessage (*)();
-
-static ZDriverMessage make_gc_decision() {
+static ZDriverRequest make_gc_decision() {
   // List of rules
+  using ZDirectorRule = ZDriverRequest (*)();
   const ZDirectorRule rules[] = {
     rule_timer,
     rule_warmup,
@@ -228,23 +227,22 @@ static ZDriverMessage make_gc_decision() {
 
   // Execute rules
   for (size_t i = 0; i < ARRAY_SIZE(rules); i++) {
-    const ZDriverMessage message = rules[i]();
-    if (!message.is_empty()) {
-      return message;
+    const ZDriverRequest request = rules[i]();
+    if (request.cause() != GCCause::_no_gc) {
+      return request;
     }
   }
 
-  // Return empty message
-  return ZDriverMessage();
+  return GCCause::_no_gc;
 }
 
 void ZDirector::run_service() {
   // Main loop
   while (_metronome.wait_for_tick()) {
     sample_allocation_rate();
-    const ZDriverMessage message = make_gc_decision();
-    if (!message.is_empty()) {
-      _driver->collect(message);
+    const ZDriverRequest request = make_gc_decision();
+    if (request.cause() != GCCause::_no_gc) {
+      _driver->collect(request);
     }
   }
 }
