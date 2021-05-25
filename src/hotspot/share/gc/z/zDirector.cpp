@@ -50,26 +50,6 @@ static void sample_allocation_rate() {
                        ZStatAllocRate::avg_sd() / M);
 }
 
-static ZDriverRequest rule_timer() {
-  if (ZCollectionInterval <= 0) {
-    // Rule disabled
-    return GCCause::_no_gc;
-  }
-
-  // Perform GC if timer has expired.
-  const double time_since_last_gc = ZStatCycle::time_since_last();
-  const double time_until_gc = ZCollectionInterval - time_since_last_gc;
-
-  log_debug(gc, director)("Rule: Timer, Interval: %.3fs, TimeUntilGC: %.3fs",
-                          ZCollectionInterval, time_until_gc);
-
-  if (time_until_gc > 0) {
-    return GCCause::_no_gc;
-  }
-
-  return GCCause::_z_timer;
-}
-
 static ZDriverRequest rule_warmup() {
   if (ZStatCycle::is_warm()) {
     // Rule disabled
@@ -92,6 +72,26 @@ static ZDriverRequest rule_warmup() {
   }
 
   return GCCause::_z_warmup;
+}
+
+static ZDriverRequest rule_timer() {
+  if (ZCollectionInterval <= 0) {
+    // Rule disabled
+    return GCCause::_no_gc;
+  }
+
+  // Perform GC if timer has expired.
+  const double time_since_last_gc = ZStatCycle::time_since_last();
+  const double time_until_gc = ZCollectionInterval - time_since_last_gc;
+
+  log_debug(gc, director)("Rule: Timer, Interval: %.3fs, TimeUntilGC: %.3fs",
+                          ZCollectionInterval, time_until_gc);
+
+  if (time_until_gc > 0) {
+    return GCCause::_no_gc;
+  }
+
+  return GCCause::_z_timer;
 }
 
 static ZDriverRequest rule_allocation_rate() {
@@ -143,6 +143,31 @@ static ZDriverRequest rule_allocation_rate() {
   return GCCause::_z_proactive;
 }
 
+static ZDriverRequest rule_high_usage() {
+  // Perform GC if the amount of free memory is 5% or less. This is a preventive
+  // meassure in the case where the application has a very low allocation rate,
+  // such that the allocation rate rule doesn't trigger, but the amount of free
+  // memory is still slowly but surely heading towards zero. In this situation,
+  // we start a GC cycle to avoid a potential allocation stall later.
+
+  // Calculate amount of free memory available. Note that we take the
+  // relocation headroom into account to avoid in-place relocation.
+  const size_t soft_max_capacity = ZHeap::heap()->soft_max_capacity();
+  const size_t used = ZHeap::heap()->used();
+  const size_t free_including_headroom = soft_max_capacity - MIN2(soft_max_capacity, used);
+  const size_t free = free_including_headroom - MIN2(free_including_headroom, ZHeuristics::relocation_headroom());
+  const double free_percent = percent_of(free, soft_max_capacity);
+
+  log_debug(gc, director)("Rule: High Usage, Free: " SIZE_FORMAT "MB(%.1f%%)",
+                          free / M, free_percent);
+
+  if (free_percent > 5.0) {
+    return GCCause::_no_gc;
+  }
+
+  return GCCause::_z_high_usage;
+}
+
 static ZDriverRequest rule_proactive() {
   if (!ZProactive || !ZStatCycle::is_warm()) {
     // Rule disabled
@@ -189,37 +214,12 @@ static ZDriverRequest rule_proactive() {
   return GCCause::_z_proactive;
 }
 
-static ZDriverRequest rule_high_usage() {
-  // Perform GC if the amount of free memory is 5% or less. This is a preventive
-  // meassure in the case where the application has a very low allocation rate,
-  // such that the allocation rate rule doesn't trigger, but the amount of free
-  // memory is still slowly but surely heading towards zero. In this situation,
-  // we start a GC cycle to avoid a potential allocation stall later.
-
-  // Calculate amount of free memory available. Note that we take the
-  // relocation headroom into account to avoid in-place relocation.
-  const size_t soft_max_capacity = ZHeap::heap()->soft_max_capacity();
-  const size_t used = ZHeap::heap()->used();
-  const size_t free_including_headroom = soft_max_capacity - MIN2(soft_max_capacity, used);
-  const size_t free = free_including_headroom - MIN2(free_including_headroom, ZHeuristics::relocation_headroom());
-  const double free_percent = percent_of(free, soft_max_capacity);
-
-  log_debug(gc, director)("Rule: High Usage, Free: " SIZE_FORMAT "MB(%.1f%%)",
-                          free / M, free_percent);
-
-  if (free_percent > 5.0) {
-    return GCCause::_no_gc;
-  }
-
-  return GCCause::_z_high_usage;
-}
-
 static ZDriverRequest make_gc_decision() {
   // List of rules
   using ZDirectorRule = ZDriverRequest (*)();
   const ZDirectorRule rules[] = {
-    rule_timer,
     rule_warmup,
+    rule_timer,
     rule_allocation_rate,
     rule_high_usage,
     rule_proactive,
