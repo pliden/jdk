@@ -377,12 +377,12 @@ private:
   static NumberSeq _normalized_duration;
 
   static uint      _last_active_workers;
-  static NumberSeq _serial_cputime;
-  static NumberSeq _parallel_cputime;
+  static NumberSeq _serial_time;
+  static NumberSeq _parallelizable_time;
 
 public:
   static void at_start();
-  static void at_end(GCCause::Cause cause, uint active_workers, double boost_factor);
+  static void at_end(GCCause::Cause cause, uint active_workers);
 
   static bool is_warm();
   static uint64_t nwarmup_cycles();
@@ -392,9 +392,9 @@ public:
   static bool is_normalized_duration_trustable();
   static const AbsSeq& normalized_duration();
 
-  static bool is_cputime_trustable();
-  static const AbsSeq& serial_cputime();
-  static const AbsSeq& parallel_cputime();
+  static bool is_time_trustable();
+  static const AbsSeq& serial_time();
+  static const AbsSeq& parallelizable_time();
 
   static double time_since_last();
 };

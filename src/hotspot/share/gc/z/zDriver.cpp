@@ -420,12 +420,8 @@ public:
   }
 
   ~ZDriverGCScope() {
-    // Calculate boost factor
-    const double boost_factor = (double)ZHeap::heap()->active_workers() /
-                                (double)ZHeap::heap()->total_workers();
-
     // Update statistics
-    ZStatCycle::at_end(_gc_cause, ZHeap::heap()->active_workers(), boost_factor);
+    ZStatCycle::at_end(_gc_cause, ZHeap::heap()->active_workers());
 
     // Update data used by soft reference policy
     Universe::heap()->update_capacity_and_used_at_gc();

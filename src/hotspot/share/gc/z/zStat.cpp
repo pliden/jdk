@@ -1060,14 +1060,14 @@ Ticks     ZStatCycle::_end_of_last;
 NumberSeq ZStatCycle::_normalized_duration(0.7 /* alpha */);
 
 uint      ZStatCycle::_last_active_workers = 0;
-NumberSeq ZStatCycle::_serial_cputime(0.7 /* alpha */);
-NumberSeq ZStatCycle::_parallel_cputime(0.7 /* alpha */);
+NumberSeq ZStatCycle::_serial_time(0.7 /* alpha */);
+NumberSeq ZStatCycle::_parallelizable_time(0.7 /* alpha */);
 
 void ZStatCycle::at_start() {
   _start_of_last = Ticks::now();
 }
 
-void ZStatCycle::at_end(GCCause::Cause cause, uint active_workers, double boost_factor) {
+void ZStatCycle::at_end(GCCause::Cause cause, uint active_workers) {
   _end_of_last = Ticks::now();
 
   if (cause == GCCause::_z_warmup) {
@@ -1080,22 +1080,23 @@ void ZStatCycle::at_end(GCCause::Cause cause, uint active_workers, double boost_
   // normalized using the boost factor to avoid artificial deflation
   // of the duration when boost mode is enabled.
   const double duration = (_end_of_last - _start_of_last).seconds();
-  const double normalized_duration = duration * boost_factor;
+  const double normalized_duration = duration * active_workers;
   _normalized_duration.add(normalized_duration);
 
-  // Calculate cputime used by serial and parallel phases
+  // Calculate serial and parallelizable GC cycle times
   const double workers_duration = ZStatWorkers::get_and_reset_duration();
-  const double serial_cputime = duration - workers_duration;
-  const double parallel_cputime = workers_duration * active_workers;
-  _serial_cputime.add(serial_cputime);
-  _parallel_cputime.add(parallel_cputime);
+  const double serial_time = duration - workers_duration;
+  const double parallelizable_time = workers_duration * active_workers;
+  _serial_time.add(serial_time);
+  _parallelizable_time.add(parallelizable_time);
 
   log_info(gc)("DURATION: %0.3f, %0.3f + %0.3f / %u = %0.3f",
                duration,
-               serial_cputime,
-               parallel_cputime,
+               serial_time,
+               parallelizable_time,
                active_workers,
-               serial_cputime + parallel_cputime / active_workers);
+               serial_time + parallelizable_time / active_workers);
+  log_info(gc)("LAST ACTIVE WORKERS: %u", _last_active_workers);
 }
 
 bool ZStatCycle::is_warm() {
@@ -1120,18 +1121,18 @@ const AbsSeq& ZStatCycle::normalized_duration() {
   return _normalized_duration;
 }
 
-bool ZStatCycle::is_cputime_trustable() {
-  // The cputimes are considered trustable if we
+bool ZStatCycle::is_time_trustable() {
+  // The times are considered trustable if we
   // have completed at least one warmup cycle.
   return _nwarmup_cycles > 0;
 }
 
-const AbsSeq& ZStatCycle::serial_cputime() {
-  return _serial_cputime;
+const AbsSeq& ZStatCycle::serial_time() {
+  return _serial_time;
 }
 
-const AbsSeq& ZStatCycle::parallel_cputime() {
-  return _parallel_cputime;
+const AbsSeq& ZStatCycle::parallelizable_time() {
+  return _parallelizable_time;
 }
 
 double ZStatCycle::time_since_last() {

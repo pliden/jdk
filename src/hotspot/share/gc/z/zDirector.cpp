@@ -95,19 +95,53 @@ static ZDriverRequest rule_timer() {
   return GCCause::_z_timer;
 }
 
-/////////////////////////////////////////////////////////////////////////////////////////////////
-/////////////////////////////////////////////////////////////////////////////////////////////////
-/////////////////////////////////////////////////////////////////////////////////////////////////
-
-#if 0
-static bool is_alloc_rate_steady() {
-  constexpr double sd_percent_threshold = 0.15; // 15%
-  const double sd_percent = ZStatAllocRate::sd() / (ZStatAllocRate::avg() + 1.0);
-  return sd_percent <= sd_percent_threshold;
+static double estimated_gc_workers(double serial_gc_time, double parallelizable_gc_time, double time_until_deadline) {
+  const double parallelizable_time_until_deadline = MAX2(time_until_deadline - serial_gc_time, 0.001);
+  return parallelizable_gc_time / parallelizable_time_until_deadline;
 }
-#endif
 
-static double estimated_time_until_oom() {
+static uint discrete_gc_workers(double gc_workers) {
+  return clamp<uint>(ceil(gc_workers), 1, ConcGCThreads);
+}
+
+static double select_gc_workers(double serial_gc_time, double parallelizable_gc_time, double time_until_oom) {
+  if (!UseDynamicNumberOfGCThreads) {
+    // Always use all workers
+    return ConcGCThreads;
+  }
+
+  // Calculate number of GC workers needed to avoid a long GC cycle and to avoid OOM.
+  const double avoid_long_gc_workers = estimated_gc_workers(serial_gc_time, parallelizable_gc_time, 10 /* seconds */);
+  const double avoid_oom_gc_workers = estimated_gc_workers(serial_gc_time, parallelizable_gc_time, time_until_oom);
+  const double gc_workers = MAX2(avoid_long_gc_workers, avoid_oom_gc_workers);
+  const uint actual_gc_workers = discrete_gc_workers(gc_workers);
+  const uint prev_gc_workers = ZStatCycle::last_active_workers();
+
+  if (actual_gc_workers < prev_gc_workers) {
+    // Before decreasing number of GC workers compared to the previous GC cycle, check if the
+    // next GC cycle will need to increase it again. If so, use the same number of GC workers
+    // that will be needed in the next cycle.
+    const double gc_duration_delta = (parallelizable_gc_time / actual_gc_workers) - (parallelizable_gc_time / prev_gc_workers);
+    const double additional_time_for_allocations = ZStatCycle::time_since_last() - gc_duration_delta - sample_interval;
+    const double next_time_until_oom = time_until_oom + additional_time_for_allocations;
+    const double next_avoid_oom_gc_workers = estimated_gc_workers(serial_gc_time, parallelizable_gc_time, next_time_until_oom);
+    const double next_gc_workers = MAX2(avoid_long_gc_workers, next_avoid_oom_gc_workers);
+    const uint next_actual_gc_workers = discrete_gc_workers(next_gc_workers);
+
+    if (next_actual_gc_workers > actual_gc_workers) {
+      return next_gc_workers;
+    }
+  }
+
+  return gc_workers;
+}
+
+ZDriverRequest rule_allocation_rate_dynamic() {
+  if (!ZStatCycle::is_time_trustable()) {
+    // Rule disabled
+    return GCCause::_no_gc;
+  }
+
   // Calculate amount of free memory available. Note that we take the
   // relocation headroom into account to avoid in-place relocation.
   const size_t soft_max_capacity = ZHeap::heap()->soft_max_capacity();
@@ -121,81 +155,60 @@ static double estimated_time_until_oom() {
   // phase changes in the allocate rate. We then add ~3.3 sigma to account for
   // the allocation rate variance, which means the probability is 1 in 1000
   // that a sample is outside of the confidence interval.
-  const double max_alloc_rate = (ZStatAllocRate::avg() * ZAllocationSpikeTolerance) + (ZStatAllocRate::sd() * one_in_1000);
-  return free / (max_alloc_rate + 1.0);
-}
+  const double max_alloc_rate = (ZStatAllocRate::avg() * ZAllocationSpikeTolerance) + (ZStatAllocRate::avg_sd() * one_in_1000);
+  const double time_until_oom = free / (max_alloc_rate + 1.0);
 
-static double estimated_gc_cputime(const AbsSeq& cputime) {
-  // Calculate max cputime of a GC cycle. The cputime is a moving
-  // average, we add ~3.3 sigma to account for the variance.
-  return cputime.davg() + (cputime.dsd() * one_in_1000);
-}
+  // Calculate max serial/parallel times of a GC cycle. The times are
+  // moving averages, we add ~3.3 sigma to account for the variance.
+  const double serial_gc_time = ZStatCycle::serial_time().davg() + (ZStatCycle::serial_time().dsd() * one_in_1000);
+  const double parallelizable_gc_time = ZStatCycle::parallelizable_time().davg() + (ZStatCycle::parallelizable_time().dsd() * one_in_1000);
 
-static double estimated_serial_gc_cputime() {
-  assert(ZStatCycle::is_cputime_trustable(), "Not trustable");
-  return estimated_gc_cputime(ZStatCycle::serial_cputime());
-}
+  // Calculate number of GC workers needed to avoid OOM.
+  const double gc_workers = select_gc_workers(serial_gc_time, parallelizable_gc_time, time_until_oom);
 
-static double estimated_parallel_gc_cputime() {
-  assert(ZStatCycle::is_cputime_trustable(), "Not trustable");
-  return estimated_gc_cputime(ZStatCycle::parallel_cputime());
-}
+  // Calculate GC duration given number of GC workers needed.
+  const double gc_duration = serial_gc_time + (parallelizable_gc_time / gc_workers);
 
-static double clamp_gc_workers(double gc_workers) {
-  return clamp<double>(gc_workers, 1, ConcGCThreads);
-}
+  // Calculate time until GC given the time until OOM and GC duration.
+  // We also subtract the sample interval, so that we don't overshoot the
+  // target time and end up starting the GC too late in the next interval.
+  const double time_until_gc = time_until_oom - gc_duration - sample_interval;
 
-static double estimated_gc_workers(double serial_gc_cputime, double parallel_gc_cputime, double time_until_deadline) {
-  const double parallelizable_time_until_deadline = MAX2(time_until_deadline - serial_gc_cputime, 0.001);
-  const double gc_workers = parallel_gc_cputime / parallelizable_time_until_deadline;
-  return clamp_gc_workers(gc_workers);
-}
+  // Convert to a discrete number of GC workers within limits.
+  const uint actual_gc_workers = discrete_gc_workers(gc_workers);
 
-static double select_gc_workers(double serial_gc_cputime, double parallel_gc_cputime, double time_until_oom, uint prev_gc_workers) {
-  if (!UseDynamicNumberOfGCThreads) {
-    return ConcGCThreads;
-  }
+  log_info(gc)("Rule: Allocation Rate, MaxAllocRate: %.3fMB/s, Free: " SIZE_FORMAT "MB, GCCPUTime: %.3f, GCDuration: %.3fs, TimeUntilOOM: %.3fs, TimeUntilGC: %.3fs, GCWorkers: %.3f (%u -> %u)",
+               max_alloc_rate / M,
+               free / M,
+               serial_gc_time + parallelizable_gc_time,
+               serial_gc_time + (parallelizable_gc_time / actual_gc_workers),
+               time_until_oom,
+               time_until_gc,
+               gc_workers,
+               ZStatCycle::last_active_workers(),
+               actual_gc_workers);
 
-  const double min_gc_workers = estimated_gc_workers(serial_gc_cputime, parallel_gc_cputime, 10 /* seconds */);
-  const double gc_workers = estimated_gc_workers(serial_gc_cputime, parallel_gc_cputime, time_until_oom);
-
-  if (gc_workers >= prev_gc_workers) {
-    return MAX2(min_gc_workers, gc_workers);
-  }
-
-  const double parallel_gc_cputime_diff = (parallel_gc_cputime / gc_workers) - (parallel_gc_cputime / prev_gc_workers);
-  const double additional_time_for_allocations_to_happen = ZStatCycle::time_since_last() - parallel_gc_cputime_diff - sample_interval;
-  const double next_time_until_oom = time_until_oom + additional_time_for_allocations_to_happen;
-  const double next_gc_workers = estimated_gc_workers(serial_gc_cputime, parallel_gc_cputime, next_time_until_oom);
-
-  return clamp<double>(next_gc_workers, min_gc_workers, prev_gc_workers);
-}
-
-ZDriverRequest rule_allocation_rate_dynamic() {
-  if (!ZStatCycle::is_cputime_trustable()) {
-    // Rule disabled
+  if (time_until_gc > 0) {
     return GCCause::_no_gc;
   }
 
-  const uint prev_gc_workers = ZStatCycle::last_active_workers();
-  const double serial_gc_cputime = estimated_serial_gc_cputime();
-  const double parallel_gc_cputime = estimated_parallel_gc_cputime();
-  const double time_until_oom = estimated_time_until_oom();
-  const double gc_workers = select_gc_workers(serial_gc_cputime, parallel_gc_cputime, time_until_oom, prev_gc_workers);
-  const double gc_duration = serial_gc_cputime + (parallel_gc_cputime / gc_workers);
-  const double time_until_gc = time_until_oom - gc_duration - sample_interval;
-
-  const uint selected_gc_workers = clamp_gc_workers(ceil(gc_workers));
-
-  if (selected_gc_workers > prev_gc_workers || time_until_gc <= 0) {
-    return ZDriverRequest(GCCause::_z_allocation_rate, selected_gc_workers);
-  }
-
-  return GCCause::_no_gc;
+  return ZDriverRequest(GCCause::_z_allocation_rate, actual_gc_workers);
 }
 
+/////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////////
+
+#if 0
+static bool is_alloc_rate_steady() {
+  constexpr double sd_percent_threshold = 0.15; // 15%
+  const double sd_percent = ZStatAllocRate::avg_sd() / (ZStatAllocRate::avg() + 1.0);
+  return sd_percent <= sd_percent_threshold;
+}
+#endif
+
 ZDriverRequest rule_allocation_rate_dynamic_orig() {
-  if (!ZStatCycle::is_cputime_trustable()) {
+  if (!ZStatCycle::is_time_trustable()) {
     // Rule disabled
     return GCCause::_no_gc;
   }
@@ -208,12 +221,8 @@ ZDriverRequest rule_allocation_rate_dynamic_orig() {
   // 0.1%
   constexpr double sd_factor = 3.290527;
   const double alloc_rate = (ZStatAllocRate::avg() * ZAllocationSpikeTolerance) +
-                            (ZStatAllocRate::sd() * sd_factor) +
+                            (ZStatAllocRate::avg_sd() * sd_factor) +
                             1.0; // avoid division by zero
-
-  if (ZHeap::heap()->has_alloc_stalled()) {
-    return ZDriverRequest(GCCause::_z_allocation_rate, suggested_n);
-  }
 
   const size_t mutator_max = ZHeap::heap()->soft_max_capacity() - ZHeuristics::relocation_headroom();
 
@@ -223,7 +232,7 @@ ZDriverRequest rule_allocation_rate_dynamic_orig() {
   const double margin = mutator_max * (1-watermark) / alloc_rate;
   // pliden: margin == worst_time_until_oom seen so far
 
-  const double alloc_rate_sd_percent = ZStatAllocRate::sd() / (ZStatAllocRate::avg() + 1.0);
+  const double alloc_rate_sd_percent = ZStatAllocRate::avg_sd() / (ZStatAllocRate::avg() + 1.0);
 
   const size_t used_bytes = ZHeap::heap()->used();
   const double used_percent = (double) used_bytes / ZStatHeap::max_capacity();
@@ -239,7 +248,7 @@ ZDriverRequest rule_allocation_rate_dynamic_orig() {
   const double cputime_total = gc_duration_avg + (gc_duration_sd * sd_factor);
 
   // avoiding boost
-  const uint previous_n = ZHeap::heap()->active_workers();
+  const uint previous_n = ZStatCycle::last_active_workers();
 
   // No adaptation once a gc cycle is initiated, so each cycle needs to be
   // short enough to handle emergencies.
@@ -255,12 +264,12 @@ ZDriverRequest rule_allocation_rate_dynamic_orig() {
   const bool is_env_steady = (alloc_rate_sd_percent <= alloc_rate_sd_threshold); /*&&
                              (used_percent - ZStatCycle::prev_used_percent <= 0.10); */
 
-  if (!is_env_steady) {
+  if (false && !is_env_steady) {
     min_n = MAX2(min_n, (uint)ceil(ConcGCThreads / 2.0));
   }
 
   uint n;
-  if (alloc_rate_sd_percent >= alloc_rate_sd_threshold) {
+  if (false && alloc_rate_sd_percent >= alloc_rate_sd_threshold) {
     // pliden: allocation rate varies a lot
     // Since time_till_oom is calculated based on the currently observed
     // alloc rate, when the alloc rate is volatile (reflected as large sd),
@@ -294,11 +303,14 @@ ZDriverRequest rule_allocation_rate_dynamic_orig() {
   }
 
   suggested_n = n;
+#if 0
   // some head start for not running at full-speed and some negative feedback for too small margin
   const double extra = sample_interval +
                        ((ConcGCThreads - n) * sample_interval) +
                        MAX2(2*sample_interval - margin, 0.0) * 10;
-
+#else
+  const double extra = sample_interval;
+#endif
 //  const double extra;
 //  extra += sample_interval;
 //  extra += (ConcGCThreads - n) * k;
@@ -306,7 +318,7 @@ ZDriverRequest rule_allocation_rate_dynamic_orig() {
 
   ret = n > previous_n || ((cputime_total / n) + extra >= time_till_oom);
 
-  bool print_log = false;
+  bool print_log = true;
   if (print_log) {
     log_info(gc)(
         "high: %.1f%%; "
@@ -322,16 +334,18 @@ ZDriverRequest rule_allocation_rate_dynamic_orig() {
         cputime_total, gc_duration_sd / gc_duration_avg * 100,
         time_till_oom,
         margin,
-        (ZStatAllocRate::avg())/(1024*1024), (ZStatAllocRate::sd() * 1)/(1024*1024),
+        (ZStatAllocRate::avg())/(1024*1024), (ZStatAllocRate::avg_sd() * 1)/(1024*1024),
         (alloc_rate_sd_percent * 100),
-        ZHeap::heap()->active_workers(),
+        previous_n,
         suggested_n,
         n_ideal,
         n_ideal_next_gc);
+#if 0
     if (UseDynamicNumberOfGCThreads) {
       assert(min_n <= suggested_n && suggested_n <= ConcGCThreads, "");
       ZHeap::heap()->set_active_workers(suggested_n);
     }
+#endif
   }
 
   if (ret) {
@@ -345,7 +359,7 @@ ZDriverRequest rule_allocation_rate_dynamic_orig() {
 /////////////////////////////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////////////////
 
-static ZDriverRequest rule_allocation_rate_static() {
+static ZDriverRequest rule_allocation_rate_old() {
   if (!ZStatCycle::is_normalized_duration_trustable()) {
     // Rule disabled
     return GCCause::_no_gc;
@@ -404,9 +418,9 @@ static ZDriverRequest rule_allocation_rate() {
       log_info(gc)("DIFF WORKERS: %d vs. %d (%s)", a.nworkers(), b.nworkers(), GCCause::to_string(a.cause()));
     }
 
-    return a;
+    return UseNewCode2 ? b : a;
   } else {
-    return rule_allocation_rate_static();
+    return rule_allocation_rate_old();
   }
 }
 
