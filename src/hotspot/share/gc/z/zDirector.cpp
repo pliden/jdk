@@ -429,7 +429,7 @@ static ZDriverRequest rule_allocation_rate_static() {
 
 static ZDriverRequest rule_allocation_rate() {
   if (UseDynamicNumberOfGCThreads) {
-#if 0
+#if 1
     ZDriverRequest a = rule_allocation_rate_dynamic_orig();
     ZDriverRequest b = rule_allocation_rate_dynamic();
 
