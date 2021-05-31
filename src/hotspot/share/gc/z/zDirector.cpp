@@ -48,7 +48,7 @@ static void sample_allocation_rate() {
   log_debug(gc, alloc)("Allocation Rate: %.1fMB/s, Avg: %.1f(+/-%.1f)MB/s",
                        bytes_per_second / M,
                        ZStatAllocRate::avg() / M,
-                       ZStatAllocRate::avg_sd() / M);
+                       ZStatAllocRate::sd() / M);
 }
 
 static ZDriverRequest rule_allocation_stall() {
@@ -164,11 +164,10 @@ ZDriverRequest rule_allocation_rate_dynamic() {
   // the allocation rate variance, which means the probability is 1 in 1000
   // that a sample is outside of the confidence interval.
   const double alloc_rate_avg = ZStatAllocRate::avg();
-  const double alloc_rate_avg_sd = ZStatAllocRate::avg_sd();
   const double alloc_rate_sd = ZStatAllocRate::sd();
   const double alloc_rate_sd_percent = alloc_rate_sd / (alloc_rate_avg + 1.0);
   const bool alloc_rate_steady = alloc_rate_sd_percent < 0.15; // 15%
-  const double alloc_rate = (alloc_rate_avg * ZAllocationSpikeTolerance) + (alloc_rate_avg_sd * one_in_1000) + 1.0;
+  const double alloc_rate = (alloc_rate_avg * ZAllocationSpikeTolerance) + (alloc_rate_sd * one_in_1000) + 1.0;
   double time_until_oom = free / alloc_rate;
 
   if (!alloc_rate_steady) {
@@ -201,7 +200,7 @@ ZDriverRequest rule_allocation_rate_dynamic() {
   const double more_safety_for_fewer_workers = (ConcGCThreads - actual_gc_duration) * sample_interval;
   const double time_until_gc = time_until_oom - actual_gc_duration - sample_interval - avoid_overstepping_interval - more_safety_for_fewer_workers;
 
-  log_info(gc)("Rule: Allocation Rate (Dynamic GC Threads  New), MaxAllocRate: %.1fMB/s(+/-%.1f%%), Free: " SIZE_FORMAT "MB, GCCPUTime: %.3f, GCDuration: %.3fs, TimeUntilOOM: %.3fs, TimeUntilGC: %.3fs, GCWorkers: %.3f (%u -> %u)",
+  log_info(gc)("Rule: Allocation Rate (Dynamic GC Threads  New), MaxAllocRate: %.1fMB/s (+/-%.1f%%), Free: " SIZE_FORMAT "MB, GCCPUTime: %.3f, GCDuration: %.3fs, TimeUntilOOM: %.3fs, TimeUntilGC: %.3fs, GCWorkers: %.3f (%u -> %u)",
                alloc_rate / M,
                alloc_rate_sd_percent * 100,
                free / M,
@@ -238,7 +237,7 @@ ZDriverRequest rule_allocation_rate_dynamic_orig() {
   // 0.1%
   constexpr double sd_factor = 3.290527;
   const double alloc_rate = (ZStatAllocRate::avg() * ZAllocationSpikeTolerance) +
-                            (ZStatAllocRate::avg_sd() * sd_factor) +
+                            (ZStatAllocRate::sd() * sd_factor) +
                             1.0; // avoid division by zero
 
   const size_t mutator_max = ZHeap::heap()->soft_max_capacity() - ZHeuristics::relocation_headroom();
@@ -329,7 +328,7 @@ ZDriverRequest rule_allocation_rate_dynamic_orig() {
 
   ret = n > previous_n || time_till_gc <= 0;
 
-  log_info(gc)("Rule: Allocation Rate (Dynamic GC Threads Orig), MaxAllocRate: %.1fMB/s(+/-%.1f%%), Free: " SIZE_FORMAT "MB, GCCPUTime: %.3f, GCDuration: %.3fs, TimeUntilOOM: %.3fs, TimeUntilGC: %.3fs, GCWorkers: %.3f (%u -> %u)",
+  log_info(gc)("Rule: Allocation Rate (Dynamic GC Threads Orig), MaxAllocRate: %.1fMB/s (+/-%.1f%%), Free: " SIZE_FORMAT "MB, GCCPUTime: %.3f, GCDuration: %.3fs, TimeUntilOOM: %.3fs, TimeUntilGC: %.3fs, GCWorkers: %.3f (%u -> %u)",
                alloc_rate / M,
                alloc_rate_sd_percent * 100,
                free_bytes / M,
@@ -401,7 +400,7 @@ static ZDriverRequest rule_allocation_rate_static() {
   // phase changes in the allocate rate. We then add ~3.3 sigma to account for
   // the allocation rate variance, which means the probability is 1 in 1000
   // that a sample is outside of the confidence interval.
-  const double max_alloc_rate = (ZStatAllocRate::avg() * ZAllocationSpikeTolerance) + (ZStatAllocRate::avg_sd() * one_in_1000);
+  const double max_alloc_rate = (ZStatAllocRate::avg() * ZAllocationSpikeTolerance) + (ZStatAllocRate::sd() * one_in_1000);
   const double time_until_oom = free / (max_alloc_rate + 1.0); // Plus 1.0B/s to avoid division by zero
 
   // Calculate max serial/parallel times of a GC cycle. The times are

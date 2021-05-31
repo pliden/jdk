@@ -832,7 +832,6 @@ void ZStatInc(const ZStatUnsampledCounter& counter, uint64_t increment) {
 const ZStatUnsampledCounter ZStatAllocRate::_counter("Allocation Rate");
 TruncatedSeq                ZStatAllocRate::_samples(ZStatAllocRate::sample_hz);
 TruncatedSeq                ZStatAllocRate::_rate(ZStatAllocRate::sample_hz);
-TruncatedSeq                ZStatAllocRate::_rate_avg(ZStatAllocRate::sample_hz);
 
 const ZStatUnsampledCounter& ZStatAllocRate::counter() {
   return _counter;
@@ -844,7 +843,6 @@ uint64_t ZStatAllocRate::sample_and_reset() {
 
   const uint64_t bytes_per_second = _samples.sum();
   _rate.add(bytes_per_second);
-  _rate_avg.add(_rate.avg());
 
   return bytes_per_second;
 }
@@ -855,10 +853,6 @@ double ZStatAllocRate::avg() {
 
 double ZStatAllocRate::sd() {
   return _rate.sd();
-}
-
-double ZStatAllocRate::avg_sd() {
-  return _rate_avg.sd();
 }
 
 //

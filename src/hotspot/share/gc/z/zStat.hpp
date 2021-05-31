@@ -332,8 +332,7 @@ class ZStatAllocRate : public AllStatic {
 private:
   static const ZStatUnsampledCounter _counter;
   static TruncatedSeq                _samples;
-  static TruncatedSeq                _rate;     // B/s
-  static TruncatedSeq                _rate_avg; // B/s
+  static TruncatedSeq                _rate;
 
 public:
   static const uint64_t sample_hz = 10;
@@ -343,7 +342,6 @@ public:
 
   static double avg();
   static double sd();
-  static double avg_sd();
 };
 
 //
