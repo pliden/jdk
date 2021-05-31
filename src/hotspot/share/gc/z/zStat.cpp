@@ -841,13 +841,20 @@ const ZStatUnsampledCounter& ZStatAllocRate::counter() {
 uint64_t ZStatAllocRate::sample_and_reset() {
   const ZStatCounterData bytes_per_sample = _counter.collect_and_reset();
   _samples.add(bytes_per_sample._counter);
-  _rate.add(_samples.sum());
+
+  const uint64_t bytes_per_second = _samples.sum();
+  _rate.add(bytes_per_second);
   _rate_avg.add(_rate.avg());
-  return avg();
+
+  return bytes_per_second;
 }
 
 double ZStatAllocRate::avg() {
   return _rate.avg();
+}
+
+double ZStatAllocRate::sd() {
+  return _rate.sd();
 }
 
 double ZStatAllocRate::avg_sd() {
@@ -1057,11 +1064,9 @@ public:
 uint64_t  ZStatCycle::_nwarmup_cycles = 0;
 Ticks     ZStatCycle::_start_of_last;
 Ticks     ZStatCycle::_end_of_last;
-NumberSeq ZStatCycle::_normalized_duration(0.7 /* alpha */);
-
-uint      ZStatCycle::_last_active_workers = 0;
 NumberSeq ZStatCycle::_serial_time(0.7 /* alpha */);
 NumberSeq ZStatCycle::_parallelizable_time(0.7 /* alpha */);
+uint      ZStatCycle::_last_active_workers = 0;
 
 void ZStatCycle::at_start() {
   _start_of_last = Ticks::now();
@@ -1076,27 +1081,13 @@ void ZStatCycle::at_end(GCCause::Cause cause, uint active_workers) {
 
   _last_active_workers = active_workers;
 
-  // Calculate normalized cycle duration. The measured duration is
-  // normalized using the boost factor to avoid artificial deflation
-  // of the duration when boost mode is enabled.
-  const double duration = (_end_of_last - _start_of_last).seconds();
-  const double normalized_duration = duration * active_workers;
-  _normalized_duration.add(normalized_duration);
-
   // Calculate serial and parallelizable GC cycle times
+  const double duration = (_end_of_last - _start_of_last).seconds();
   const double workers_duration = ZStatWorkers::get_and_reset_duration();
   const double serial_time = duration - workers_duration;
   const double parallelizable_time = workers_duration * active_workers;
   _serial_time.add(serial_time);
   _parallelizable_time.add(parallelizable_time);
-
-  log_info(gc)("DURATION: %0.3f, %0.3f + %0.3f / %u = %0.3f",
-               duration,
-               serial_time,
-               parallelizable_time,
-               active_workers,
-               serial_time + parallelizable_time / active_workers);
-  log_info(gc)("LAST ACTIVE WORKERS: %u", _last_active_workers);
 }
 
 bool ZStatCycle::is_warm() {
@@ -1105,20 +1096,6 @@ bool ZStatCycle::is_warm() {
 
 uint64_t ZStatCycle::nwarmup_cycles() {
   return _nwarmup_cycles;
-}
-
-uint ZStatCycle::last_active_workers() {
-  return _last_active_workers;
-}
-
-bool ZStatCycle::is_normalized_duration_trustable() {
-  // The normalized duration is considered trustable if we have
-  // completed at least one warmup cycle
-  return _nwarmup_cycles > 0;
-}
-
-const AbsSeq& ZStatCycle::normalized_duration() {
-  return _normalized_duration;
 }
 
 bool ZStatCycle::is_time_trustable() {
@@ -1133,6 +1110,10 @@ const AbsSeq& ZStatCycle::serial_time() {
 
 const AbsSeq& ZStatCycle::parallelizable_time() {
   return _parallelizable_time;
+}
+
+uint ZStatCycle::last_active_workers() {
+  return _last_active_workers;
 }
 
 double ZStatCycle::time_since_last() {

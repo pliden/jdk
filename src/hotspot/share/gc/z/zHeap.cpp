@@ -22,6 +22,7 @@
  */
 
 #include "precompiled.hpp"
+#include "gc/shared/gc_globals.hpp"
 #include "gc/shared/locationPrinter.hpp"
 #include "gc/shared/tlab_globals.hpp"
 #include "gc/z/zAddress.inline.hpp"
@@ -150,10 +151,6 @@ bool ZHeap::is_in(uintptr_t addr) const {
   }
 
   return false;
-}
-
-uint ZHeap::total_workers() const {
-  return _workers.active_workers();
 }
 
 uint ZHeap::active_workers() const {

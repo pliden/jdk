@@ -36,7 +36,6 @@ private:
 public:
   ZWorkers();
 
-  uint total_workers() const;
   uint active_workers() const;
   void set_active_workers(uint nworkers);
 

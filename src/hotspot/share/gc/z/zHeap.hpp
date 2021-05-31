@@ -94,7 +94,6 @@ public:
   uint32_t hash_oop(uintptr_t addr) const;
 
   // Threads
-  uint total_workers() const;
   uint active_workers() const;
   void set_active_workers(uint nworkers);
   void threads_do(ThreadClosure* tc) const;

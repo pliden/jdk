@@ -34,8 +34,8 @@ public:
 
   static bool use_per_cpu_shared_small_pages();
 
-  static uint default_nparallel_workers();
-  static uint default_nconcurrent_workers();
+  static uint nparallel_workers();
+  static uint nconcurrent_workers();
 };
 
 #endif // SHARE_GC_Z_ZHEURISTICS_HPP

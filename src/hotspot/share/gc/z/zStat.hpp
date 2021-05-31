@@ -342,6 +342,7 @@ public:
   static uint64_t sample_and_reset();
 
   static double avg();
+  static double sd();
   static double avg_sd();
 };
 
@@ -374,11 +375,9 @@ private:
   static uint64_t  _nwarmup_cycles;
   static Ticks     _start_of_last;
   static Ticks     _end_of_last;
-  static NumberSeq _normalized_duration;
-
-  static uint      _last_active_workers;
   static NumberSeq _serial_time;
   static NumberSeq _parallelizable_time;
+  static uint      _last_active_workers;
 
 public:
   static void at_start();
@@ -387,14 +386,11 @@ public:
   static bool is_warm();
   static uint64_t nwarmup_cycles();
 
-  static uint last_active_workers();
-
-  static bool is_normalized_duration_trustable();
-  static const AbsSeq& normalized_duration();
-
   static bool is_time_trustable();
   static const AbsSeq& serial_time();
   static const AbsSeq& parallelizable_time();
+
+  static uint last_active_workers();
 
   static double time_since_last();
 };

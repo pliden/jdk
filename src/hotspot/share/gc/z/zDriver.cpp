@@ -57,7 +57,7 @@ ZDriverRequest::ZDriverRequest() :
     ZDriverRequest(GCCause::_no_gc) {}
 
 ZDriverRequest::ZDriverRequest(GCCause::Cause cause) :
-    ZDriverRequest(cause, 0 /* nworkers */) {}
+    ZDriverRequest(cause, ConcGCThreads) {}
 
 ZDriverRequest::ZDriverRequest(GCCause::Cause cause, uint nworkers) :
     _cause(cause),
@@ -145,18 +145,12 @@ public:
   }
 };
 
-static bool should_clear_soft_references() {
-  // Clear if one or more allocations have stalled
-  const bool stalled = ZHeap::heap()->has_alloc_stalled();
-  if (stalled) {
-    // Clear
-    return true;
-  }
-
-  // Clear if implied by the GC cause
-  const GCCause::Cause cause = ZCollectedHeap::heap()->gc_cause();
-  if (cause == GCCause::_wb_full_gc ||
-      cause == GCCause::_metadata_GC_clear_soft_refs) {
+static bool should_clear_soft_references(const ZDriverRequest& gc_request) {
+  // Clear if one or more allocations have stalled,
+  // or if implied by the GC cause.
+  if (ZHeap::heap()->has_alloc_stalled() ||
+      gc_request.cause() == GCCause::_wb_full_gc ||
+      gc_request.cause() == GCCause::_metadata_GC_clear_soft_refs) {
     // Clear
     return true;
   }
@@ -165,20 +159,37 @@ static bool should_clear_soft_references() {
   return false;
 }
 
-static uint select_active_worker_threads(const ZDriverRequest& gc_request) {
-  // Use all worker thread if unspecified by message
-  if (gc_request.nworkers() == 0) {
-    return ConcGCThreads;
-  }
-
+static uint select_active_worker_threads_dynamic(const ZDriverRequest& gc_request) {
   // Use all worker threads if one or more allocations have stalled
-  const bool stalled = ZHeap::heap()->has_alloc_stalled();
-  if (stalled) {
+  if (ZHeap::heap()->has_alloc_stalled()) {
     return ConcGCThreads;
   }
 
   // Use requested number of worker threads
   return gc_request.nworkers();
+}
+
+static uint select_active_worker_threads_static(const ZDriverRequest& gc_request) {
+  // Boost worker threads if one or more allocations have stalled,
+  // or if implied by the GC cause.
+  if (ZHeap::heap()->has_alloc_stalled() ||
+      gc_request.cause() == GCCause::_wb_full_gc ||
+      gc_request.cause() == GCCause::_java_lang_system_gc ||
+      gc_request.cause() == GCCause::_metadata_GC_clear_soft_refs) {
+    // Boost
+    return MAX2(ConcGCThreads, ParallelGCThreads);
+  }
+
+  // Don't boost
+  return ConcGCThreads;
+}
+
+static uint select_active_worker_threads(const ZDriverRequest& gc_request) {
+  if (UseDynamicNumberOfGCThreads) {
+    return select_active_worker_threads_dynamic(gc_request);
+  } else {
+    return select_active_worker_threads_static(gc_request);
+  }
 }
 
 class VM_ZMarkStart : public VM_ZOperation {
@@ -199,13 +210,12 @@ public:
     ZServiceabilityPauseTracer tracer;
 
     // Set up soft reference policy
-    const bool clear = should_clear_soft_references();
+    const bool clear = should_clear_soft_references(gc_request());
     ZHeap::heap()->set_soft_reference_policy(clear);
 
     // Select number of worker threads to use
     const uint nworkers = select_active_worker_threads(gc_request());
     ZHeap::heap()->set_active_workers(nworkers);
-    log_info(gc)("Using %u GC workers", nworkers);
 
     ZCollectedHeap::heap()->increment_total_collections(true /* full */);
 

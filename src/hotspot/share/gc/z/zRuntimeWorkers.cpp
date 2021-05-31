@@ -33,24 +33,24 @@
 class ZRuntimeWorkersInitializeTask : public AbstractGangTask {
 private:
   const uint     _nworkers;
-  uint           _nstarted;
+  uint           _started;
   ZConditionLock _lock;
 
 public:
   ZRuntimeWorkersInitializeTask(uint nworkers) :
       AbstractGangTask("ZRuntimeWorkersInitializeTask"),
       _nworkers(nworkers),
-      _nstarted(0),
+      _started(0),
       _lock() {}
 
   virtual void work(uint worker_id) {
     // Wait for all threads to start
     ZLocker<ZConditionLock> locker(&_lock);
-    if (++_nstarted == _nworkers) {
+    if (++_started == _nworkers) {
       // All threads started
       _lock.notify_all();
     } else {
-      while (_nstarted != _nworkers) {
+      while (_started != _nworkers) {
         _lock.wait();
       }
     }

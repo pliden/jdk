@@ -22,6 +22,7 @@
  */
 
 #include "precompiled.hpp"
+#include "gc/shared/gc_globals.hpp"
 #include "gc/shared/gcLogPrecious.hpp"
 #include "gc/z/zLock.inline.hpp"
 #include "gc/z/zStat.hpp"
@@ -33,14 +34,14 @@
 class ZWorkersInitializeTask : public AbstractGangTask {
 private:
   const uint     _nworkers;
-  uint           _nstarted;
+  uint           _started;
   ZConditionLock _lock;
 
 public:
   ZWorkersInitializeTask(uint nworkers) :
       AbstractGangTask("ZWorkersInitializeTask"),
       _nworkers(nworkers),
-      _nstarted(0),
+      _started(0),
       _lock() {}
 
   virtual void work(uint worker_id) {
@@ -49,11 +50,11 @@ public:
 
     // Wait for all threads to start
     ZLocker<ZConditionLock> locker(&_lock);
-    if (++_nstarted == _nworkers) {
+    if (++_started == _nworkers) {
       // All threads started
       _lock.notify_all();
     } else {
-      while (_nstarted != _nworkers) {
+      while (_started != _nworkers) {
         _lock.wait();
       }
     }
@@ -62,11 +63,15 @@ public:
 
 ZWorkers::ZWorkers() :
     _workers("ZWorker",
-             ConcGCThreads,
+             UseDynamicNumberOfGCThreads ? ConcGCThreads : MAX2(ConcGCThreads, ParallelGCThreads),
              true /* are_GC_task_threads */,
              true /* are_ConcurrentGC_threads */) {
 
-  log_info_p(gc, init)("GC Workers: %u", _workers.total_workers());
+  if (UseDynamicNumberOfGCThreads) {
+    log_info_p(gc, init)("GC Workers: %u (dynamic)", _workers.total_workers());
+  } else {
+    log_info_p(gc, init)("GC Workers: %u/%u (static)", ConcGCThreads, _workers.total_workers());
+  }
 
   // Initialize worker threads
   _workers.initialize_workers();
@@ -78,6 +83,15 @@ ZWorkers::ZWorkers() :
   // Execute task to register threads as workers
   ZWorkersInitializeTask task(_workers.total_workers());
   _workers.run_task(&task);
+}
+
+uint ZWorkers::active_workers() const {
+  return _workers.active_workers();
+}
+
+void ZWorkers::set_active_workers(uint nworkers) {
+  log_info(gc, task)("Using %u workers", nworkers);
+  _workers.update_active_workers(nworkers);
 }
 
 void ZWorkers::run(ZTask* task) {

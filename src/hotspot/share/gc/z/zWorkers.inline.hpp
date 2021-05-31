@@ -24,19 +24,6 @@
 #ifndef SHARE_GC_Z_ZWORKERS_INLINE_HPP
 #define SHARE_GC_Z_ZWORKERS_INLINE_HPP
 
-#include "gc/shared/gc_globals.hpp"
 #include "gc/z/zWorkers.hpp"
-
-inline uint ZWorkers::total_workers() const {
-  return _workers.total_workers();
-}
-
-inline uint ZWorkers::active_workers() const {
-  return _workers.active_workers();
-}
-
-inline void ZWorkers::set_active_workers(uint nworkers) {
-  _workers.update_active_workers(nworkers);
-}
 
 #endif // SHARE_GC_Z_ZWORKERS_INLINE_HPP

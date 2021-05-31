@@ -56,7 +56,7 @@ void ZArguments::initialize() {
 
   // Select number of parallel threads
   if (FLAG_IS_DEFAULT(ParallelGCThreads)) {
-    FLAG_SET_DEFAULT(ParallelGCThreads, ZHeuristics::default_nparallel_workers());
+    FLAG_SET_DEFAULT(ParallelGCThreads, ZHeuristics::nparallel_workers());
   }
 
   if (ParallelGCThreads == 0) {
@@ -65,11 +65,15 @@ void ZArguments::initialize() {
 
   // Select number of concurrent threads
   if (FLAG_IS_DEFAULT(ConcGCThreads)) {
-    FLAG_SET_DEFAULT(ConcGCThreads, ZHeuristics::default_nconcurrent_workers());
+    FLAG_SET_DEFAULT(ConcGCThreads, ZHeuristics::nconcurrent_workers());
   }
 
   if (ConcGCThreads == 0) {
     vm_exit_during_initialization("The flag -XX:+UseZGC can not be combined with -XX:ConcGCThreads=0");
+  }
+
+  if (FLAG_IS_DEFAULT(ZAllocationSpikeTolerance) && UseDynamicNumberOfGCThreads) {
+    FLAG_SET_DEFAULT(ZAllocationSpikeTolerance, 1);
   }
 
 #ifdef COMPILER2
