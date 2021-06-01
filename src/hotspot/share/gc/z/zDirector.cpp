@@ -196,9 +196,8 @@ ZDriverRequest rule_allocation_rate_dynamic() {
   // Calculate time until GC given the time until OOM and GC duration.
   // We also subtract the sample interval, so that we don't overshoot the
   // target time and end up starting the GC too late in the next interval.
-  const double avoid_overstepping_interval = sample_interval;
-  const double more_safety_for_fewer_workers = (ConcGCThreads - actual_gc_duration) * sample_interval;
-  const double time_until_gc = time_until_oom - actual_gc_duration - sample_interval - avoid_overstepping_interval - more_safety_for_fewer_workers;
+  const double more_safety_for_fewer_workers = (ConcGCThreads - actual_gc_workers) * sample_interval;
+  const double time_until_gc = time_until_oom - actual_gc_duration - sample_interval - more_safety_for_fewer_workers;
 
   log_info(gc)("Rule: Allocation Rate (Dynamic GC Threads  New), MaxAllocRate: %.1fMB/s (+/-%.1f%%), Free: " SIZE_FORMAT "MB, GCCPUTime: %.3f, GCDuration: %.3fs, TimeUntilOOM: %.3fs, TimeUntilGC: %.3fs, GCWorkers: %.3f (%u -> %u)",
                alloc_rate / M,
@@ -212,7 +211,7 @@ ZDriverRequest rule_allocation_rate_dynamic() {
                last_gc_workers,
                actual_gc_workers);
 
-  if (actual_gc_workers > last_gc_workers || time_until_gc <= 0) {
+  if (actual_gc_workers <= last_gc_workers && time_until_gc > 0) {
     return ZDriverRequest(GCCause::_no_gc, actual_gc_workers);
   }
 
