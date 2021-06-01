@@ -119,13 +119,29 @@ static uint discrete_gc_workers(double gc_workers) {
   return clamp<uint>(ceil(gc_workers), 1, ConcGCThreads);
 }
 
-static double select_gc_workers(double serial_gc_time, double parallelizable_gc_time, double time_until_oom) {
+static double select_gc_workers(double serial_gc_time, double parallelizable_gc_time, double alloc_rate_sd_percent, double time_until_oom) {
+  // Use all workers until we're warm
+  if (!ZStatCycle::is_warm()) {
+    const double not_warm_gc_workers = ConcGCThreads;
+    log_info(gc, director)("Select GC Workers (Not Warm): GCWorkers: %.3f", not_warm_gc_workers);
+    return not_warm_gc_workers;
+  }
+
   // Calculate number of GC workers needed to avoid a long GC cycle and to avoid OOM.
   const double avoid_long_gc_workers = estimated_gc_workers(serial_gc_time, parallelizable_gc_time, 10 /* seconds */);
   const double avoid_oom_gc_workers = estimated_gc_workers(serial_gc_time, parallelizable_gc_time, time_until_oom);
+
   const double gc_workers = MAX2(avoid_long_gc_workers, avoid_oom_gc_workers);
   const uint actual_gc_workers = discrete_gc_workers(gc_workers);
   const uint last_gc_workers = ZStatCycle::last_active_workers();
+
+  if (alloc_rate_sd_percent >= 0.15) {
+    const double half_gc_workers = ConcGCThreads / 2.0;
+    const double unsteady_gc_workers = MAX3<double>(gc_workers, last_gc_workers, half_gc_workers);
+    log_info(gc, director)("Select GC Workers (Unsteady): AvoidLongGCWorkers: %.3f, AvoidOOMGCWorkers: %.3f, LastGCWorkers: %.3f, HalfGCWorkers: %.3f, GCWorkers: %.3f",
+                            avoid_long_gc_workers, avoid_oom_gc_workers, (double)last_gc_workers, half_gc_workers, unsteady_gc_workers);
+    return unsteady_gc_workers;
+  }
 
   if (actual_gc_workers < last_gc_workers) {
     // Before decreasing number of GC workers compared to the previous GC cycle, check if the
@@ -135,12 +151,18 @@ static double select_gc_workers(double serial_gc_time, double parallelizable_gc_
     const double additional_time_for_allocations = ZStatCycle::time_since_last() - gc_duration_delta - sample_interval;
     const double next_time_until_oom = time_until_oom + additional_time_for_allocations;
     const double next_avoid_oom_gc_workers = estimated_gc_workers(serial_gc_time, parallelizable_gc_time, next_time_until_oom);
-    const double next_gc_workers = MAX2(avoid_long_gc_workers, next_avoid_oom_gc_workers);
 
     // Add 0.5 to increase friction and avoid lowering too eagerly
-    return MIN2<double>(ceil(next_gc_workers + 0.50), last_gc_workers);
+    const double next_gc_workers = next_avoid_oom_gc_workers + 0.5;
+    const double try_lowering_gc_workers = clamp<double>(next_gc_workers, actual_gc_workers, last_gc_workers);
+
+    log_info(gc, director)("Select GC Workers (Try Lowering): AvoidLongGCWorkers: %.3f, AvoidOOMGCWorkers: %.3f, NextAvoidOOMGCWorkers: %.3f, LastGCWorkers: %.3f, GCWorkers: %.3f",
+                            avoid_long_gc_workers, avoid_oom_gc_workers, next_avoid_oom_gc_workers, (double)last_gc_workers, try_lowering_gc_workers);
+    return try_lowering_gc_workers;
   }
 
+  log_info(gc, director)("Select GC Workers (Normal): AvoidLongGCWorkers: %.3f, AvoidOOMGCWorkers: %.3f, LastGCWorkers: %.3f, GCWorkers: %.3f",
+                         avoid_long_gc_workers, avoid_oom_gc_workers, (double)last_gc_workers, gc_workers);
   return gc_workers;
 }
 
@@ -166,13 +188,8 @@ ZDriverRequest rule_allocation_rate_dynamic() {
   const double alloc_rate_avg = ZStatAllocRate::avg();
   const double alloc_rate_sd = ZStatAllocRate::sd();
   const double alloc_rate_sd_percent = alloc_rate_sd / (alloc_rate_avg + 1.0);
-  const bool alloc_rate_steady = alloc_rate_sd_percent < 0.15; // 15%
   const double alloc_rate = (alloc_rate_avg * ZAllocationSpikeTolerance) + (alloc_rate_sd * one_in_1000) + 1.0;
-  double time_until_oom = free / alloc_rate;
-
-  if (!alloc_rate_steady) {
-    time_until_oom /= (1.0 + alloc_rate_sd_percent);
-  }
+  const double time_until_oom = (free / alloc_rate) / (1.0 + alloc_rate_sd_percent);
 
   // Calculate max serial/parallel times of a GC cycle. The times are
   // moving averages, we add ~3.3 sigma to account for the variance.
@@ -180,11 +197,7 @@ ZDriverRequest rule_allocation_rate_dynamic() {
   const double parallelizable_gc_time = ZStatCycle::parallelizable_time().davg() + (ZStatCycle::parallelizable_time().dsd() * one_in_1000);
 
   // Calculate number of GC workers needed to avoid OOM.
-  double gc_workers = select_gc_workers(serial_gc_time, parallelizable_gc_time, time_until_oom);
-
-  if (!alloc_rate_steady) {
-    gc_workers = MAX2<double>(gc_workers, ZStatCycle::last_active_workers());
-  }
+  const double gc_workers = select_gc_workers(serial_gc_time, parallelizable_gc_time, alloc_rate_sd_percent, time_until_oom);
 
   // Convert to a discrete number of GC workers within limits.
   const uint actual_gc_workers = discrete_gc_workers(gc_workers);
@@ -199,7 +212,7 @@ ZDriverRequest rule_allocation_rate_dynamic() {
   const double more_safety_for_fewer_workers = (ConcGCThreads - actual_gc_workers) * sample_interval;
   const double time_until_gc = time_until_oom - actual_gc_duration - sample_interval - more_safety_for_fewer_workers;
 
-  log_info(gc)("Rule: Allocation Rate (Dynamic GC Threads  New), MaxAllocRate: %.1fMB/s (+/-%.1f%%), Free: " SIZE_FORMAT "MB, GCCPUTime: %.3f, GCDuration: %.3fs, TimeUntilOOM: %.3fs, TimeUntilGC: %.3fs, GCWorkers: %.3f (%u -> %u)",
+  log_info(gc)("Rule: Allocation Rate (Dynamic GC Threads  New), MaxAllocRate: %.1fMB/s (+/-%.1f%%), Free: " SIZE_FORMAT "MB, GCCPUTime: %.3f, GCDuration: %.3fs, TimeUntilOOM: %.3fs, TimeUntilGC: %.3fs, GCWorkers: %u -> %u",
                alloc_rate / M,
                alloc_rate_sd_percent * 100,
                free / M,
@@ -207,7 +220,6 @@ ZDriverRequest rule_allocation_rate_dynamic() {
                serial_gc_time + (parallelizable_gc_time / actual_gc_workers),
                time_until_oom,
                time_until_gc,
-               gc_workers,
                last_gc_workers,
                actual_gc_workers);
 
@@ -427,7 +439,7 @@ static ZDriverRequest rule_allocation_rate_static() {
 
 static ZDriverRequest rule_allocation_rate() {
   if (UseDynamicNumberOfGCThreads) {
-#if 1
+#if 0
     ZDriverRequest a = rule_allocation_rate_dynamic_orig();
     ZDriverRequest b = rule_allocation_rate_dynamic();
 
