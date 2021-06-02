@@ -48,7 +48,6 @@ public:
 
 class ZDriver : public ConcurrentGCThread {
 private:
-  ZDriverRequest               _gc_request;
   ZMessagePort<ZDriverRequest> _gc_cycle_port;
   ZRendezvousPort              _gc_locker_port;
 
@@ -67,7 +66,7 @@ private:
 
   void check_out_of_memory();
 
-  void gc();
+  void gc(const ZDriverRequest& request);
 
 protected:
   virtual void run_service();
