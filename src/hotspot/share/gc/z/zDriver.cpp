@@ -77,14 +77,12 @@ uint ZDriverRequest::nworkers() const {
 
 class VM_ZOperation : public VM_Operation {
 private:
-  const ZDriverRequest _gc_request;
-  const uint           _gc_id;
-  bool                 _gc_locked;
-  bool                 _success;
+  const uint _gc_id;
+  bool       _gc_locked;
+  bool       _success;
 
 public:
-  VM_ZOperation(const ZDriverRequest& gc_request) :
-      _gc_request(gc_request),
+  VM_ZOperation() :
       _gc_id(GCId::current()),
       _gc_locked(false),
       _success(false) {}
@@ -132,10 +130,6 @@ public:
     Heap_lock->unlock();
   }
 
-  const ZDriverRequest& gc_request() const {
-    return _gc_request;
-  }
-
   bool gc_locked() const {
     return _gc_locked;
   }
@@ -147,9 +141,6 @@ public:
 
 class VM_ZMarkStart : public VM_ZOperation {
 public:
-  VM_ZMarkStart(const ZDriverRequest& gc_request) :
-      VM_ZOperation(gc_request) {}
-
   virtual VMOp_Type type() const {
     return VMOp_ZMarkStart;
   }
@@ -171,9 +162,6 @@ public:
 
 class VM_ZMarkEnd : public VM_ZOperation {
 public:
-  VM_ZMarkEnd(const ZDriverRequest& gc_request) :
-      VM_ZOperation(gc_request) {}
-
   virtual VMOp_Type type() const {
     return VMOp_ZMarkEnd;
   }
@@ -187,9 +175,6 @@ public:
 
 class VM_ZRelocateStart : public VM_ZOperation {
 public:
-  VM_ZRelocateStart(const ZDriverRequest& gc_request) :
-      VM_ZOperation(gc_request) {}
-
   virtual VMOp_Type type() const {
     return VMOp_ZRelocateStart;
   }
@@ -278,7 +263,7 @@ void ZDriver::collect(const ZDriverRequest& request) {
 template <typename T>
 bool ZDriver::pause() {
   for (;;) {
-    T op(_gc_request);
+    T op;
     VMThread::execute(&op);
     if (op.gc_locked()) {
       // Wait for GC to become unlocked and restart the VM operation
