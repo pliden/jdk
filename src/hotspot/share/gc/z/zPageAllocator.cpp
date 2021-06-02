@@ -260,10 +260,6 @@ size_t ZPageAllocator::used() const {
   return Atomic::load(&_used);
 }
 
-size_t ZPageAllocator::used_high() const {
-  return Atomic::load(&_used_high);
-}
-
 size_t ZPageAllocator::unused() const {
   const ssize_t capacity = (ssize_t)Atomic::load(&_capacity);
   const ssize_t used = (ssize_t)Atomic::load(&_used);
@@ -335,7 +331,7 @@ void ZPageAllocator::increase_used(size_t size, bool worker_relocation) {
   // Update atomically since we have concurrent readers
   const size_t used = Atomic::add(&_used, size);
   if (used > _used_high) {
-    Atomic::store(&_used_high, used);
+    _used_high = used;
   }
 }
 
