@@ -46,7 +46,7 @@
 #include "gc/z/zThread.inline.hpp"
 #include "gc/z/zThreadLocalAllocBuffer.hpp"
 #include "gc/z/zUtils.inline.hpp"
-#include "gc/z/zWorkers.inline.hpp"
+#include "gc/z/zWorkers.hpp"
 #include "logging/log.hpp"
 #include "memory/iterator.inline.hpp"
 #include "oops/objArrayOop.inline.hpp"

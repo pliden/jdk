@@ -40,7 +40,7 @@
 #include "gc/z/zStat.hpp"
 #include "gc/z/zThread.inline.hpp"
 #include "gc/z/zVerify.hpp"
-#include "gc/z/zWorkers.inline.hpp"
+#include "gc/z/zWorkers.hpp"
 #include "logging/log.hpp"
 #include "memory/iterator.hpp"
 #include "memory/metaspaceUtils.hpp"
