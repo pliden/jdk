@@ -54,12 +54,12 @@ static void sample_allocation_rate() {
 static ZDriverRequest rule_allocation_stall() {
   // Perform GC if we've observed at least one allocation stall since
   // the last GC started.
-  const bool stall_since_last_gc = ZHeap::heap()->has_alloc_stalled();
+  const bool alloc_stall_observed = ZHeap::heap()->has_alloc_stalled();
 
-  log_debug(gc, director)("Rule: Allocation Stall Since Last GC: %s",
-                          stall_since_last_gc ? "Yes" : "No");
+  log_debug(gc, director)("Rule: Allocation Stall, Observed: %s",
+                          alloc_stall_observed ? "Yes" : "No");
 
-  if (!stall_since_last_gc) {
+  if (!alloc_stall_observed) {
     return GCCause::_no_gc;
   }
 
@@ -123,7 +123,7 @@ static double select_gc_workers(double serial_gc_time, double parallelizable_gc_
   // Use all workers until we're warm
   if (!ZStatCycle::is_warm()) {
     const double not_warm_gc_workers = ConcGCThreads;
-    log_info(gc, director)("Select GC Workers (Not Warm), GCWorkers: %.3f", not_warm_gc_workers);
+    log_debug(gc, director)("Select GC Workers (Not Warm), GCWorkers: %.3f", not_warm_gc_workers);
     return not_warm_gc_workers;
   }
 
@@ -138,7 +138,7 @@ static double select_gc_workers(double serial_gc_time, double parallelizable_gc_
   if (alloc_rate_sd_percent >= 0.15) {
     const double half_gc_workers = ConcGCThreads / 2.0;
     const double unsteady_gc_workers = MAX3<double>(gc_workers, last_gc_workers, half_gc_workers);
-    log_info(gc, director)("Select GC Workers (Unsteady), "
+    log_debug(gc, director)("Select GC Workers (Unsteady), "
                            "AvoidLongGCWorkers: %.3f, AvoidOOMGCWorkers: %.3f, LastGCWorkers: %.3f, HalfGCWorkers: %.3f, GCWorkers: %.3f",
                             avoid_long_gc_workers, avoid_oom_gc_workers, (double)last_gc_workers, half_gc_workers, unsteady_gc_workers);
     return unsteady_gc_workers;
@@ -157,13 +157,13 @@ static double select_gc_workers(double serial_gc_time, double parallelizable_gc_
     const double next_gc_workers = next_avoid_oom_gc_workers + 0.5;
     const double try_lowering_gc_workers = clamp<double>(next_gc_workers, actual_gc_workers, last_gc_workers);
 
-    log_info(gc, director)("Select GC Workers (Try Lowering), "
+    log_debug(gc, director)("Select GC Workers (Try Lowering), "
                            "AvoidLongGCWorkers: %.3f, AvoidOOMGCWorkers: %.3f, NextAvoidOOMGCWorkers: %.3f, LastGCWorkers: %.3f, GCWorkers: %.3f",
                             avoid_long_gc_workers, avoid_oom_gc_workers, next_avoid_oom_gc_workers, (double)last_gc_workers, try_lowering_gc_workers);
     return try_lowering_gc_workers;
   }
 
-  log_info(gc, director)("Select GC Workers (Normal), "
+  log_debug(gc, director)("Select GC Workers (Normal), "
                          "AvoidLongGCWorkers: %.3f, AvoidOOMGCWorkers: %.3f, LastGCWorkers: %.3f, GCWorkers: %.3f",
                          avoid_long_gc_workers, avoid_oom_gc_workers, (double)last_gc_workers, gc_workers);
   return gc_workers;
@@ -215,18 +215,18 @@ ZDriverRequest rule_allocation_rate_dynamic() {
   const double more_safety_for_fewer_workers = (ConcGCThreads - actual_gc_workers) * sample_interval;
   const double time_until_gc = time_until_oom - actual_gc_duration - sample_interval - more_safety_for_fewer_workers - 1.0;
 
-  log_info(gc)("Rule: Allocation Rate (Dynamic GC Workers), "
-               "MaxAllocRate: %.1fMB/s (+/-%.1f%%), Free: " SIZE_FORMAT "MB, GCCPUTime: %.3f, "
-               "GCDuration: %.3fs, TimeUntilOOM: %.3fs, TimeUntilGC: %.3fs, GCWorkers: %u -> %u",
-               alloc_rate / M,
-               alloc_rate_sd_percent * 100,
-               free / M,
-               serial_gc_time + parallelizable_gc_time,
-               serial_gc_time + (parallelizable_gc_time / actual_gc_workers),
-               time_until_oom,
-               time_until_gc,
-               last_gc_workers,
-               actual_gc_workers);
+  log_debug(gc, director)("Rule: Allocation Rate (Dynamic GC Workers), "
+                          "MaxAllocRate: %.1fMB/s (+/-%.1f%%), Free: " SIZE_FORMAT "MB, GCCPUTime: %.3f, "
+                          "GCDuration: %.3fs, TimeUntilOOM: %.3fs, TimeUntilGC: %.3fs, GCWorkers: %u -> %u",
+                          alloc_rate / M,
+                          alloc_rate_sd_percent * 100,
+                          free / M,
+                          serial_gc_time + parallelizable_gc_time,
+                          serial_gc_time + (parallelizable_gc_time / actual_gc_workers),
+                          time_until_oom,
+                          time_until_gc,
+                          last_gc_workers,
+                          actual_gc_workers);
 
   if (actual_gc_workers <= last_gc_workers && time_until_gc > 0) {
     return ZDriverRequest(GCCause::_no_gc, actual_gc_workers);
