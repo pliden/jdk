@@ -60,7 +60,7 @@ private:
   size_t                     _used_low;
   ssize_t                    _reclaimed;
   ZList<ZPageAllocation>     _stalled;
-  volatile size_t            _nstalled;
+  volatile uint64_t          _nstalled;
   ZList<ZPageAllocation>     _satisfied;
   ZUnmapper*                 _unmapper;
   ZUncommitter*              _uncommitter;
