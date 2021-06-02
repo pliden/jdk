@@ -145,50 +145,6 @@ public:
   }
 };
 
-static bool should_clear_soft_references(const ZDriverRequest& gc_request) {
-  // Clear soft references if implied by the GC cause
-  if (gc_request.cause() == GCCause::_wb_full_gc ||
-      gc_request.cause() == GCCause::_metadata_GC_clear_soft_refs ||
-      gc_request.cause() == GCCause::_z_allocation_stall) {
-    // Clear
-    return true;
-  }
-
-  // Don't clear
-  return false;
-}
-
-static uint select_active_worker_threads_dynamic(const ZDriverRequest& gc_request) {
-  // Use requested number of worker threads
-  return gc_request.nworkers();
-}
-
-static uint select_active_worker_threads_static(const ZDriverRequest& gc_request) {
-  const GCCause::Cause cause = gc_request.cause();
-  const uint nworkers = gc_request.nworkers();
-
-  // Boost number of worker threads if implied by the GC cause
-  if (cause == GCCause::_wb_full_gc ||
-      cause == GCCause::_java_lang_system_gc ||
-      cause == GCCause::_metadata_GC_clear_soft_refs ||
-      cause == GCCause::_z_allocation_stall) {
-    // Boost
-    const uint boosted_nworkers = MAX2(nworkers, ParallelGCThreads);
-    return boosted_nworkers;
-  }
-
-  // Use requested number of worker threads
-  return nworkers;
-}
-
-static uint select_active_worker_threads(const ZDriverRequest& gc_request) {
-  if (UseDynamicNumberOfGCThreads) {
-    return select_active_worker_threads_dynamic(gc_request);
-  } else {
-    return select_active_worker_threads_static(gc_request);
-  }
-}
-
 class VM_ZMarkStart : public VM_ZOperation {
 public:
   VM_ZMarkStart(const ZDriverRequest& gc_request) :
@@ -205,14 +161,6 @@ public:
   virtual bool do_operation() {
     ZStatTimer timer(ZPhasePauseMarkStart);
     ZServiceabilityPauseTracer tracer;
-
-    // Set up soft reference policy
-    const bool clear = should_clear_soft_references(gc_request());
-    ZHeap::heap()->set_soft_reference_policy(clear);
-
-    // Select number of worker threads to use
-    const uint nworkers = select_active_worker_threads(gc_request());
-    ZHeap::heap()->set_active_workers(nworkers);
 
     ZCollectedHeap::heap()->increment_total_collections(true /* full */);
 
@@ -407,6 +355,50 @@ void ZDriver::check_out_of_memory() {
   ZHeap::heap()->check_out_of_memory();
 }
 
+static bool should_clear_soft_references(const ZDriverRequest& gc_request) {
+  // Clear soft references if implied by the GC cause
+  if (gc_request.cause() == GCCause::_wb_full_gc ||
+      gc_request.cause() == GCCause::_metadata_GC_clear_soft_refs ||
+      gc_request.cause() == GCCause::_z_allocation_stall) {
+    // Clear
+    return true;
+  }
+
+  // Don't clear
+  return false;
+}
+
+static uint select_active_worker_threads_dynamic(const ZDriverRequest& gc_request) {
+  // Use requested number of worker threads
+  return gc_request.nworkers();
+}
+
+static uint select_active_worker_threads_static(const ZDriverRequest& gc_request) {
+  const GCCause::Cause cause = gc_request.cause();
+  const uint nworkers = gc_request.nworkers();
+
+  // Boost number of worker threads if implied by the GC cause
+  if (cause == GCCause::_wb_full_gc ||
+      cause == GCCause::_java_lang_system_gc ||
+      cause == GCCause::_metadata_GC_clear_soft_refs ||
+      cause == GCCause::_z_allocation_stall) {
+    // Boost
+    const uint boosted_nworkers = MAX2(nworkers, ParallelGCThreads);
+    return boosted_nworkers;
+  }
+
+  // Use requested number of worker threads
+  return nworkers;
+}
+
+static uint select_active_worker_threads(const ZDriverRequest& gc_request) {
+  if (UseDynamicNumberOfGCThreads) {
+    return select_active_worker_threads_dynamic(gc_request);
+  } else {
+    return select_active_worker_threads_static(gc_request);
+  }
+}
+
 class ZDriverGCScope : public StackObj {
 private:
   GCIdMark                   _gc_id;
@@ -424,6 +416,14 @@ public:
       _tracer() {
     // Update statistics
     ZStatCycle::at_start();
+
+    // Set up soft reference policy
+    const bool clear = should_clear_soft_references(gc_request);
+    ZHeap::heap()->set_soft_reference_policy(clear);
+
+    // Select number of worker threads to use
+    const uint nworkers = select_active_worker_threads(gc_request);
+    ZHeap::heap()->set_active_workers(nworkers);
   }
 
   ~ZDriverGCScope() {
