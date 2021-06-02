@@ -146,11 +146,10 @@ public:
 };
 
 static bool should_clear_soft_references(const ZDriverRequest& gc_request) {
-  // Clear if one or more allocations have stalled,
-  // or if implied by the GC cause.
-  if (ZHeap::heap()->has_alloc_stalled() ||
-      gc_request.cause() == GCCause::_wb_full_gc ||
-      gc_request.cause() == GCCause::_metadata_GC_clear_soft_refs) {
+  // Clear soft references if implied by the GC cause
+  if (gc_request.cause() == GCCause::_wb_full_gc ||
+      gc_request.cause() == GCCause::_metadata_GC_clear_soft_refs ||
+      gc_request.cause() == GCCause::_z_allocation_stall) {
     // Clear
     return true;
   }
@@ -160,28 +159,26 @@ static bool should_clear_soft_references(const ZDriverRequest& gc_request) {
 }
 
 static uint select_active_worker_threads_dynamic(const ZDriverRequest& gc_request) {
-  // Use all worker threads if one or more allocations have stalled
-  if (ZHeap::heap()->has_alloc_stalled()) {
-    return ConcGCThreads;
-  }
-
   // Use requested number of worker threads
   return gc_request.nworkers();
 }
 
 static uint select_active_worker_threads_static(const ZDriverRequest& gc_request) {
-  // Boost worker threads if one or more allocations have stalled,
-  // or if implied by the GC cause.
-  if (ZHeap::heap()->has_alloc_stalled() ||
-      gc_request.cause() == GCCause::_wb_full_gc ||
-      gc_request.cause() == GCCause::_java_lang_system_gc ||
-      gc_request.cause() == GCCause::_metadata_GC_clear_soft_refs) {
+  const GCCause::Cause cause = gc_request.cause();
+  const uint nworkers = gc_request.nworkers();
+
+  // Boost number of worker threads if implied by the GC cause
+  if (cause == GCCause::_wb_full_gc ||
+      cause == GCCause::_java_lang_system_gc ||
+      cause == GCCause::_metadata_GC_clear_soft_refs ||
+      cause == GCCause::_z_allocation_stall) {
     // Boost
-    return MAX2(ConcGCThreads, ParallelGCThreads);
+    const uint boosted_nworkers = MAX2(nworkers, ParallelGCThreads);
+    return boosted_nworkers;
   }
 
-  // Don't boost
-  return ConcGCThreads;
+  // Use requested number of worker threads
+  return nworkers;
 }
 
 static uint select_active_worker_threads(const ZDriverRequest& gc_request) {
